@@ -27,12 +27,12 @@ const INITIAL_GREETING_MESSAGE: ChatMessage = {
   role: 'assistant',
   type: 'quick-replies',
   timestamp: new Date().toISOString(),
-  content: `👋 Hello! Welcome to **CarePoint Medical Clinic**.\n\nI'm your AI Receptionist. I can help you find specialist doctors, check real-time availability, schedule consultations, or view and manage existing appointments.\n\nHow can I help you today?`,
+  content: `Hello! Welcome to **CarePoint Medical Clinic**.\n\nI'm your patient care coordinator at the reception desk. I can help you find specialist doctors, check real-time availability, schedule consultations, or view and manage existing appointments.\n\nHow can I help you today?`,
   quickReplies: [
-    { id: 'qr_dentist', label: '🦷 Book a Dentist', actionText: 'I want to see a dentist tomorrow' },
-    { id: 'qr_gp', label: '🩺 General Physician', actionText: 'I want to see a general physician' },
-    { id: 'qr_derma', label: '✨ Dermatologist', actionText: 'I want to consult a dermatologist' },
-    { id: 'qr_apts', label: '📅 View My Appointments', actionText: 'Show me my appointments' }
+    { id: 'qr_dentist', label: 'Book a Dentist', actionText: 'I want to see a dentist tomorrow' },
+    { id: 'qr_gp', label: 'General Physician', actionText: 'I want to see a general physician' },
+    { id: 'qr_derma', label: 'Dermatologist', actionText: 'I want to consult a dermatologist' },
+    { id: 'qr_apts', label: 'View My Appointments', actionText: 'Show me my appointments' }
   ]
 };
 
@@ -115,7 +115,7 @@ export function useChat() {
         if (err.name === 'AbortError') return;
         console.error('Failed to communicate with AI receptionist:', err);
         setError('Connection interrupted. Please try again.');
-        
+
         const errorMsg: ChatMessage = {
           id: `msg_err_${Date.now()}`,
           role: 'assistant',

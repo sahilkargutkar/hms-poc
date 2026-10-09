@@ -5,7 +5,6 @@ import { useChat } from '@/hooks/useChat';
 import { ChatHeader } from './ChatHeader';
 import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';
-import { StateInspector } from './StateInspector';
 
 interface ChatContainerProps {
   onMinimize?: () => void;
@@ -72,9 +71,6 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
           onQuickReply={handleQuickReply}
         />
       </main>
-
-      {/* State Inspector / Debug Pill for POC Transparency */}
-      <StateInspector state={conversationState} />
 
       {/* Input */}
       <ChatInput

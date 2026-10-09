@@ -64,9 +64,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         </div>
 
         <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400 px-1">
-          <span className="flex items-center gap-1">
-            <Sparkles className="h-3 w-3 text-teal-600" />
-            <span>AI Receptionist connected to CarePoint Clinical Scheduling</span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+            <span>Directly connected to CarePoint Clinic Scheduling</span>
           </span>
           <span className="hidden sm:inline">Press Enter to send</span>
         </div>

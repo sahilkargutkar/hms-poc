@@ -14,7 +14,6 @@ import {
 
 interface ChatHeaderProps {
   onReset: () => void;
-  isMockMode?: boolean;
   onMinimize?: () => void;
   onMaximize?: () => void;
   onClose?: () => void;
@@ -47,11 +46,11 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
               </h1>
               <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-600/20 ring-inset">
                 <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                AI Receptionist
+                Reception Desk
               </span>
             </div>
             <p className="text-[11px] text-slate-500 truncate hidden sm:block">
-              24/7 Automated Appointment Scheduling
+              24/7 Patient Appointment & Scheduling Desk
             </p>
           </div>
         </div>
@@ -136,7 +135,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-5 w-5 text-teal-600" />
-                <h2 className="text-base font-semibold text-slate-900">How to use CarePoint AI</h2>
+                <h2 className="text-base font-semibold text-slate-900">How to use CarePoint Front Desk</h2>
               </div>
               <button
                 onClick={() => setShowHelpModal(false)}

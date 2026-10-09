@@ -49,8 +49,8 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
             <div className="mb-3 max-w-xs animate-bounce rounded-2xl bg-white p-3.5 shadow-xl ring-1 ring-slate-900/10 transition-all">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-teal-700">
-                  <Sparkles className="h-3.5 w-3.5" />
-                  <span>24/7 AI Receptionist</span>
+                  <Stethoscope className="h-3.5 w-3.5" />
+                  <span>CarePoint Front Desk</span>
                 </div>
                 <button
                   type="button"
@@ -65,7 +65,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
                 </button>
               </div>
               <p className="mt-1 text-xs text-slate-600">
-                Book a doctor, check available slots, or manage visits instantly!
+                Book a doctor, check available consultation slots, or manage visits instantly!
               </p>
             </div>
           )}
@@ -75,7 +75,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
             type="button"
             onClick={() => setWidgetState('normal')}
             className="group relative flex items-center gap-2.5 rounded-full bg-teal-600 px-4 py-3.5 text-white shadow-xl ring-4 ring-teal-500/20 hover:bg-teal-700 hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200"
-            aria-label="Open AI Receptionist"
+            aria-label="Open Clinic Reception Desk"
           >
             <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-teal-700/50">
               <Stethoscope className="h-4 w-4 text-white" />
@@ -85,8 +85,8 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
               </span>
             </div>
             <div className="text-left">
-              <div className="text-xs font-semibold leading-tight">Chat with Receptionist</div>
-              <div className="text-[10px] text-teal-100 leading-tight">AI Scheduling Online</div>
+              <div className="text-xs font-semibold leading-tight">Chat with Front Desk</div>
+              <div className="text-[10px] text-teal-100 leading-tight">Reception Online</div>
             </div>
           </button>
         </div>
@@ -108,7 +108,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold text-slate-900 truncate">
-                  CarePoint AI Receptionist
+                  CarePoint Clinic Reception
                 </p>
                 <p className="text-[10px] text-emerald-600 font-medium">
                   • Click to expand conversation

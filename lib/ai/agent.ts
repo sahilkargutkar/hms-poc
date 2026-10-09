@@ -1,7 +1,7 @@
 import { SYSTEM_PROMPT } from './prompts';
 import { AI_TOOLS } from './tools';
 import { executeAiTool } from './toolHandlers';
-import { getTomorrowDateString } from '@/lib/api/mock';
+import { getTomorrowDateString } from '@/lib/utils/date';
 import {
   ChatMessage,
   ConversationState,
@@ -213,7 +213,7 @@ async function handleDirectUiAction(
             role: 'assistant',
             type: 'appointment',
             timestamp: nowIso,
-            content: `🎉 **Your appointment is confirmed!**\n\nYou're booked with **${appointment.doctorName}** for **${dateStr} at ${timeStr}**.\n\nAn SMS confirmation with clinic directions has been dispatched to **${appointment.patientPhone}**.`,
+            content: `**Your appointment is confirmed!**\n\nYou're booked with **${appointment.doctorName}** for **${dateStr} at ${timeStr}**.\n\nAn SMS confirmation with clinic directions has been dispatched to **${appointment.patientPhone}**.`,
             appointment,
             quickReplies
           }
@@ -288,7 +288,7 @@ async function handleDirectUiAction(
             role: 'assistant',
             type: 'cancellation-success',
             timestamp: nowIso,
-            content: `✅ Your appointment with **${targetApt.doctorName}** has been **cancelled successfully**.\n\nA cancellation confirmation SMS has been sent to your phone.`,
+            content: `Your appointment with **${targetApt.doctorName}** has been **cancelled successfully**.\n\nA cancellation confirmation SMS has been sent to your phone.`,
             quickReplies
           }
         };
@@ -356,7 +356,7 @@ async function executeConversationalEngine(
         role: 'assistant',
         type: 'quick-replies',
         timestamp: nowIso,
-        content: `Hi! 👋 Welcome to **CarePoint Medical Clinic**. I'm your AI Medical Receptionist.\n\nI can help you find doctors, check available time slots, book visits, or manage existing appointments. How can I assist you today?`,
+        content: `Welcome to **CarePoint Medical Clinic**.\n\nI'm your patient care coordinator at the front desk. I can help you find doctors, check available consultation slots, book visits, or manage your existing appointments. How can I assist you today?`,
         quickReplies
       }
     };
@@ -383,8 +383,8 @@ async function executeConversationalEngine(
         type: 'text',
         timestamp: nowIso,
         content: isEmergency
-          ? `🚨 **EMERGENCY NOTICE**: If you or someone with you is experiencing severe chest pain, shortness of breath, acute heavy bleeding, or life-threatening symptoms, please **call emergency services (911/112) immediately** or go to the nearest emergency department.`
-          : `As an AI Medical Receptionist, I cannot provide medical diagnoses, treatment plans, or drug prescriptions. I'd be delighted to book an in-person consultation with one of our certified doctors so they can examine you thoroughly.`
+          ? `**EMERGENCY NOTICE**: If you or someone with you is experiencing severe chest pain, shortness of breath, acute heavy bleeding, or life-threatening symptoms, please **call emergency services (911/112) immediately** or go to the nearest emergency department.`
+          : `Our front desk team cannot provide medical diagnoses, treatment plans, or drug prescriptions. I'd be delighted to book an in-person consultation with one of our certified doctors so they can examine you thoroughly.`
       }
     };
   }
@@ -411,7 +411,7 @@ async function executeConversationalEngine(
           role: 'assistant',
           type: 'text',
           timestamp: nowIso,
-          content: `Sure, I can help you with your appointments! 📅\n\nCould you please provide the **mobile phone number** used when booking?`,
+          content: `Sure, I can help you with your appointments.\n\nCould you please provide the **mobile phone number** used when booking?`,
           quickReplies
         }
       };

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CarePoint Clinic & AI Receptionist | Medical Appointment Scheduling",
-  description: "Automated medical appointment scheduling and clinical reception agent with 24/7 real-time booking.",
+  title: "CarePoint Medical Clinic | Appointment & Patient Care Desk",
+  description: "Direct medical appointment scheduling and clinic patient care desk with 24/7 real-time consultation booking.",
 };
 
 export default function RootLayout({

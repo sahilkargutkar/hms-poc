@@ -9,8 +9,6 @@ Production-quality Next.js + React + TypeScript frontend and AI Medical Receptio
 ```
 User (Patient)
       ↓
-Chat UI Interface (/chat)
-      ↓
 useChat Hook & Conversation State
       ↓
 AI Receptionist Agent (lib/ai/agent.ts)
@@ -19,10 +17,6 @@ AI Tool / Function Calling (lib/ai/tools.ts)
       ↓
 Centralized API Client (lib/api/client.ts)
       ↓
-┌───────────────────────┬────────────────────────┐
-│  Backend REST API     │  Mock Contract Layer   │
-│  (Real Backend)       │  (lib/api/mock.ts)     │
-└───────────────────────┴────────────────────────┘
 ```
 
 ---
