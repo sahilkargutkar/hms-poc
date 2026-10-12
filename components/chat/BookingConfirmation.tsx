@@ -104,6 +104,10 @@ export const BookingConfirmation: React.FC<BookingConfirmationProps> = ({
               <Phone className="h-3.5 w-3.5 text-slate-400" />
               {patient.phone || 'Not provided'}
             </span>
+            <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-600/20">
+              <CheckCircle className="h-3 w-3 text-emerald-600" />
+              OTP Verified
+            </span>
           </div>
         </div>
       </div>

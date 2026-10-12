@@ -118,6 +118,18 @@ export interface RequestOtpResponseDto {
   message?: string;
 }
 
+export interface EmergencyDetectionRequestDto {
+  text: string;
+}
+
+export interface EmergencyDetectionResponseDto {
+  isEmergency: boolean;
+  matchedCategories?: string[];
+  matchedKeywords?: string[];
+  message?: string | null;
+  emergencyPhoneNumber?: string | null;
+}
+
 export interface VerifyOtpRequestDto {
   mobileNumber: string;
   otp: string;

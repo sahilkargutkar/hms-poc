@@ -23,6 +23,7 @@ import {
   RequestOtpResponseDto,
   VerifyOtpRequestDto,
   AuthTokenResponseDto,
+  EmergencyDetectionResponseDto,
   DayOfWeek
 } from '@/types/api';
 
@@ -698,6 +699,26 @@ class ApiClient {
       this.setAuthToken(data.accessToken);
     }
     return data;
+  }
+
+  /**
+   * 10. POST /api/v1/emergency-detection
+   * Detects acute emergencies via live backend emergency API
+   */
+  async detectEmergency(text: string): Promise<EmergencyDetectionResponseDto> {
+    try {
+      const res = await fetch(`${this.baseUrl}/emergency-detection`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ text }),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Backend emergency-detection call failed:', e);
+    }
+    return { isEmergency: false };
   }
 }
 

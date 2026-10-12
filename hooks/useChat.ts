@@ -30,9 +30,9 @@ const INITIAL_GREETING_MESSAGE: ChatMessage = {
   content: `Hello! Welcome to **CarePoint Medical Clinic**.\n\nI'm your patient care coordinator at the reception desk. I can help you find specialist doctors, check real-time availability, schedule consultations, or view and manage existing appointments.\n\nHow can I help you today?`,
   quickReplies: [
     { id: 'qr_dentist', label: 'Book a Dentist', actionText: 'I want to see a dentist tomorrow' },
-    { id: 'qr_gp', label: 'General Physician', actionText: 'I want to see a general physician' },
+    { id: 'qr_info', label: 'Timings & Clinic Info', actionText: 'What are the clinic timings?' },
     { id: 'qr_apts', label: 'View My Appointments', actionText: 'Show me my appointments' },
-    { id: 'qr_emergency', label: '🚨 Emergency Contacts', actionText: 'What is the emergency hotline and mobile number?' }
+    { id: 'qr_emergency', label: 'Emergency Contacts', actionText: 'What is the emergency hotline and mobile number?' }
   ]
 };
 

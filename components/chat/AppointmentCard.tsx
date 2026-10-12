@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Appointment } from '@/types/api';
-import { Calendar, Clock, User, Phone, CheckCircle2, XCircle, AlertCircle, RefreshCw } from 'lucide-react';
+import { Calendar, Clock, User, Phone, CheckCircle2, XCircle, AlertCircle, RefreshCw, Star, ExternalLink } from 'lucide-react';
 
 interface AppointmentCardProps {
   appointment: Appointment;
@@ -97,6 +97,27 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Post Appointment Google Review Link */}
+      {!isCancelled && appointment.status === 'CONFIRMED' && (
+        <div className="mt-3 rounded-lg border border-amber-200/90 bg-gradient-to-r from-amber-50/80 via-yellow-50/50 to-amber-50/80 p-2.5 text-xs shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-amber-900 font-medium">
+              <span className="text-amber-500 font-bold tracking-tight">★★★★★</span>
+              <span>Happy with your booking? Share your feedback!</span>
+            </div>
+            <a
+              href="https://g.page/r/carepoint-clinic/review"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-1 rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-2xs hover:bg-amber-700 active:scale-95 transition-all self-start sm:self-auto"
+            >
+              <span>Review on Google</span>
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Action Buttons */}
       {showActions && !isCancelled && (

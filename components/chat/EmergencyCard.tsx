@@ -65,6 +65,24 @@ export const EmergencyCard: React.FC<EmergencyCardProps> = ({ contacts }) => {
           </div>
         </div>
 
+        {/* Detected Emergency Category Chips */}
+        {contacts?.matchedCategories && contacts.matchedCategories.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 -mt-1">
+            <span className="text-[11px] font-bold text-rose-900 uppercase tracking-wide">
+              Priority Triage:
+            </span>
+            {contacts.matchedCategories.map((cat) => (
+              <span
+                key={cat}
+                className="inline-flex items-center gap-1 rounded-md bg-rose-100/90 px-2.5 py-0.5 text-[11px] font-bold text-rose-900 ring-1 ring-rose-300 shadow-2xs"
+              >
+                <AlertTriangle className="h-3 w-3 text-rose-600" />
+                {cat}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Contact Numbers Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* 1. 24/7 Hotline Number */}

@@ -1,8 +1,10 @@
 import { SYSTEM_PROMPT } from './prompts';
 import { AI_TOOLS } from './tools';
 import { executeAiTool } from './toolHandlers';
+import { apiClient } from '@/lib/api/client';
 import { getTomorrowDateString } from '@/lib/utils/date';
-import { EMERGENCY_CONFIG, isEmergencyQuery } from '@/lib/constants/emergency';
+import { EMERGENCY_CONFIG, isEmergencyQuery, matchEmergencyCategories } from '@/lib/constants/emergency';
+import { matchClinicInfoOrFaq, CLINIC_INFO_FALLBACK_MESSAGE } from '@/lib/constants/clinicInfo';
 import {
   ChatMessage,
   ConversationState,
@@ -10,21 +12,40 @@ import {
   ChatResponsePayload,
   QuickReply
 } from '@/types/chat';
-import { Doctor, MedicalService, AvailableSlot, Appointment } from '@/types/api';
+import { Doctor, MedicalService, AvailableSlot, Appointment, EmergencyDetectionResponseDto } from '@/types/api';
 
 const AI_API_KEY = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
 const AI_BASE_URL = process.env.AI_BASE_URL || 'https://api.openai.com/v1';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 
 /**
- * Immediate, zero-latency emergency responder
+ * Immediate emergency responder (combines local heuristics & live backend Emergency API)
  */
-export function handleEmergencyRequest(state: ConversationState): ChatResponsePayload {
+export function handleEmergencyRequest(
+  state: ConversationState,
+  apiResult?: EmergencyDetectionResponseDto | null,
+  localMatch?: { matchedCategories: string[]; matchedKeywords: string[] } | null
+): ChatResponsePayload {
   const nowIso = new Date().toISOString();
   const quickReplies: QuickReply[] = [
     { id: 'qr_safe_book', label: 'I am safe, book regular appointment', actionText: 'I am safe, I want to book a regular appointment' },
     { id: 'qr_nearest_er', label: 'Emergency Guidance', actionText: 'What should I do in this emergency?' }
   ];
+
+  const matchedCategories = Array.from(
+    new Set([...(localMatch?.matchedCategories || []), ...(apiResult?.matchedCategories || [])])
+  );
+  const matchedKeywords = Array.from(
+    new Set([...(localMatch?.matchedKeywords || []), ...(apiResult?.matchedKeywords || [])])
+  );
+
+  const categoryText = matchedCategories.length > 0
+    ? `\n🚨 **Priority Medical Trigger:** [${matchedCategories.join(', ')}]\n`
+    : '';
+
+  const apiEmergencyNotice = apiResult?.emergencyPhoneNumber
+    ? `\n• **Direct Emergency Line:** **${apiResult.emergencyPhoneNumber}**`
+    : '';
 
   return {
     updatedState: state,
@@ -33,13 +54,15 @@ export function handleEmergencyRequest(state: ConversationState): ChatResponsePa
       role: 'assistant',
       type: 'emergency',
       timestamp: nowIso,
-      content: `⚠️ **EMERGENCY MEDICAL NOTICE**\n\nIf you or someone with you is experiencing a medical emergency, severe chest pain, shortness of breath, acute heavy bleeding, sudden paralysis, or life-threatening symptoms, **do not wait for a clinic appointment**.\n\nPlease call our urgent care team immediately:\n\n• **24/7 Emergency Hotline:** **${EMERGENCY_CONFIG.hotlineDisplay}**\n• **Duty Doctor Mobile:** **${EMERGENCY_CONFIG.mobileDisplay}**\n\nIf this is a life-threatening crisis, please dial **911** (or your local emergency services) or proceed to the nearest Emergency Room immediately.`,
+      content: `⚠️ **EMERGENCY MEDICAL NOTICE**\n${categoryText}\nIf you or someone with you is experiencing a medical emergency, acute symptoms, or life-threatening distress, **do not wait for a clinic appointment**.\n\nPlease call our emergency care team immediately:\n\n• **24/7 Emergency Hotline:** **${EMERGENCY_CONFIG.hotlineDisplay}**\n• **Duty Doctor Mobile:** **${EMERGENCY_CONFIG.mobileDisplay}**${apiEmergencyNotice}\n\nIf this is a life-threatening crisis, please dial **911** (or your local emergency services) or proceed to the nearest Emergency Room immediately.`,
       emergencyContacts: {
         hotline: EMERGENCY_CONFIG.hotlineDisplay,
         hotlineTel: EMERGENCY_CONFIG.hotlineTel,
         mobile: EMERGENCY_CONFIG.mobileDisplay,
         mobileTel: EMERGENCY_CONFIG.mobileTel,
-        description: EMERGENCY_CONFIG.description
+        description: EMERGENCY_CONFIG.description,
+        matchedCategories,
+        matchedKeywords
       },
       quickReplies
     }
@@ -69,9 +92,20 @@ export async function runAiReceptionist(payload: ChatRequestPayload): Promise<Ch
     return handleDirectUiAction(action, currentState);
   }
 
-  // 2. CRITICAL EMERGENCY PROTOCOL: Immediate hotline & mobile sharing
-  if (userPrompt && isEmergencyQuery(userPrompt)) {
-    return handleEmergencyRequest(currentState);
+  // 2. CRITICAL EMERGENCY PROTOCOL: Checked via Emergency API and official categories dictionary
+  if (userPrompt) {
+    const localMatch = matchEmergencyCategories(userPrompt);
+    if (localMatch.isEmergency) {
+      return handleEmergencyRequest(currentState, null, localMatch);
+    }
+    try {
+      const apiEmerg = await apiClient.detectEmergency(userPrompt);
+      if (apiEmerg && apiEmerg.isEmergency) {
+        return handleEmergencyRequest(currentState, apiEmerg, localMatch);
+      }
+    } catch {
+      // Fall through to regular conversational engine
+    }
   }
 
   // 3. If AI API key is configured, execute real LLM function-calling flow
@@ -157,8 +191,25 @@ async function handleDirectUiAction(
       const timeStr = formatTimeDisplay(slot.startTime);
       const dateStr = formatDateDisplay(slot.startTime.split('T')[0]);
 
-      // If we already have patient information, show confirmation card immediately
+      // If we already have patient information, verify OTP if not verified yet
       if (state.patient.name && state.patient.phone) {
+        if (!state.isOtpVerified) {
+          state.pendingAction = 'awaiting_otp';
+          return {
+            updatedState: state,
+            message: {
+              id: `msg_${Date.now()}`,
+              role: 'assistant',
+              type: 'text',
+              timestamp: nowIso,
+              content: `Great! We have reserved **${timeStr}** on **${dateStr}** with **${state.doctor?.name || 'the doctor'}**.\n\nTo verify your mobile number (**${state.patient.phone}**), we have sent a 4-digit verification code.\n\nPlease enter the **4-digit OTP** to continue:`,
+              quickReplies: [
+                { id: 'qr_fill_otp', label: 'Use Demo OTP (1234)', actionText: '1234' }
+              ]
+            }
+          };
+        }
+
         state.pendingAction = 'awaiting_confirmation';
         return {
           updatedState: state,
@@ -234,10 +285,12 @@ async function handleDirectUiAction(
           selectedSlot: null,
           patient: preservedPatient,
           currentAppointment: null,
-          pendingAction: 'idle'
+          pendingAction: 'idle',
+          isOtpVerified: true
         };
 
         const quickReplies: QuickReply[] = [
+          { id: 'qr_review', label: '⭐ Rate on Google Reviews', actionText: 'Leave a Google review' },
           { id: 'qr_view_apt', label: 'View My Appointments', actionText: 'Show me my appointments' },
           { id: 'qr_book_another', label: 'Book Another Appointment', actionText: 'I want to book another appointment' }
         ];
@@ -249,7 +302,7 @@ async function handleDirectUiAction(
             role: 'assistant',
             type: 'appointment',
             timestamp: nowIso,
-            content: `**Your appointment is confirmed!**\n\nYou're booked with **${appointment.doctorName}** for **${dateStr} at ${timeStr}**.\n\nAn SMS confirmation with clinic directions has been dispatched to **${appointment.patientPhone}**.`,
+            content: `🎉 **Your appointment is confirmed!**\n\nYou're booked with **${appointment.doctorName}** for **${dateStr} at ${timeStr}**.\n\nAn SMS confirmation with clinic directions has been dispatched to **${appointment.patientPhone}**.\n\n⭐⭐⭐⭐⭐\n**Happy with your booking experience?**\nWe'd love your feedback! Please [leave us a review on Google](https://g.page/r/carepoint-clinic/review) to share your thoughts with our healthcare team.`,
             appointment,
             quickReplies
           }
@@ -377,15 +430,124 @@ async function executeConversationalEngine(
   }
 
   // 1. EMERGENCY PROTOCOL CHECK
-  if (isEmergencyQuery(text)) {
-    return handleEmergencyRequest(state);
+  const localMatch = matchEmergencyCategories(text);
+  if (localMatch.isEmergency) {
+    return handleEmergencyRequest(state, null, localMatch);
   }
 
-  // 2. GREETING
+  // 2. OTP VERIFICATION CHECK (Accept any 4-digit code to continue booking)
+  const fourDigitMatch = text.match(/\b\d{4}\b/);
+  if (
+    (state.pendingAction === 'awaiting_otp' || (state.doctor && state.selectedSlot && state.patient.phone && !state.isOtpVerified)) &&
+    fourDigitMatch
+  ) {
+    state.isOtpVerified = true;
+    state.otp = fourDigitMatch[0];
+    state.pendingAction = 'awaiting_confirmation';
+
+    return {
+      updatedState: state,
+      message: {
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        type: 'booking-confirmation',
+        timestamp: nowIso,
+        content: `✅ **Mobile Number Verified!** (OTP: ${fourDigitMatch[0]})\n\nI have prepared your appointment details. Please review and confirm your booking below:`,
+        bookingDraft: {
+          doctor: state.doctor,
+          service: state.service,
+          date: state.date,
+          selectedSlot: state.selectedSlot,
+          patient: state.patient
+        }
+      }
+    };
+  }
+
+  if (state.pendingAction === 'awaiting_otp' && !fourDigitMatch && !lower.includes('cancel')) {
+    return {
+      updatedState: state,
+      message: {
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        type: 'text',
+        timestamp: nowIso,
+        content: `Please enter the **4-digit verification OTP** sent to **${state.patient.phone || 'your phone'}** (e.g. *1234*) to verify your contact number.`,
+        quickReplies: [
+          { id: 'qr_demo_otp', label: 'Use Demo OTP (1234)', actionText: '1234' }
+        ]
+      }
+    };
+  }
+
+  // If patient info was submitted during booking and OTP is not yet verified:
+  if (state.doctor && state.selectedSlot && phoneMatch && !state.isOtpVerified) {
+    state.pendingAction = 'awaiting_otp';
+    return {
+      updatedState: state,
+      message: {
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        type: 'text',
+        timestamp: nowIso,
+        content: `Thank you, **${state.patient.name || 'Patient'}**! We've sent a 4-digit verification code to **${state.patient.phone}**.\n\nPlease enter the **4-digit OTP** to verify your contact number and proceed with booking.`,
+        quickReplies: [
+          { id: 'qr_demo_otp', label: 'Use Demo OTP (1234)', actionText: '1234' }
+        ]
+      }
+    };
+  }
+
+  // 3. CLINIC INFORMATION & FAQ CHECK
+  const clinicInfoMatch = matchClinicInfoOrFaq(text);
+  if (clinicInfoMatch.isMatch) {
+    const allInfoReplies: QuickReply[] = [
+      { id: 'qr_timings', label: '🕒 Timings', actionText: 'What are the clinic timings?' },
+      { id: 'qr_address', label: '📍 Address & Directions', actionText: 'What is the clinic address?' },
+      { id: 'qr_parking', label: '🚗 Parking', actionText: 'Do you have parking facilities?' },
+      { id: 'qr_doctors', label: '👨‍⚕️ Doctors & Specialities', actionText: 'Show me doctors and specialities' },
+      { id: 'qr_fees', label: '💳 Consultation Fees', actionText: 'What are the consultation fees?' },
+      { id: 'qr_services', label: '🩺 Services', actionText: 'What services do you offer?' },
+      { id: 'qr_holidays', label: '📅 Holidays', actionText: 'When is the clinic closed for holidays?' },
+      { id: 'qr_book', label: 'Book an Appointment', actionText: 'I want to book an appointment' }
+    ];
+
+    const activeReplies = allInfoReplies
+      .filter(r => r.id !== `qr_${clinicInfoMatch.topicId}`)
+      .slice(0, 4);
+
+    return {
+      updatedState: state,
+      message: {
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        type: 'text',
+        timestamp: nowIso,
+        content: clinicInfoMatch.content,
+        quickReplies: activeReplies
+      }
+    };
+  }
+
+  // 4. GOOGLE REVIEWS INQUIRY
+  if (lower.includes('google review') || lower.includes('leave review') || lower.includes('write review') || (lower.includes('review') && !lower.includes('view') && !lower.includes('appointment'))) {
+    return {
+      updatedState: state,
+      message: {
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        type: 'text',
+        timestamp: nowIso,
+        content: `⭐⭐⭐⭐⭐\n**We Value Your Feedback!**\n\nThank you for choosing CarePoint Medical Clinic. We'd love to hear about your experience! Please [click here to leave us a review on Google](https://g.page/r/carepoint-clinic/review) ★★★★★.\n\nYour review helps our front desk and medical team continue delivering outstanding care!`
+      }
+    };
+  }
+
+  // 5. GREETING
   if (/^(hi|hello|hey|good morning|good afternoon|good evening|greetings)\b/i.test(lower) && lower.length < 25) {
     const quickReplies: QuickReply[] = [
       { id: 'qr_book_dentist', label: 'Book a Dentist', actionText: 'I want to see a dentist' },
-      { id: 'qr_book_gp', label: 'General Physician', actionText: 'I need to see a general physician' },
+      { id: 'qr_info', label: 'Clinic Timings & Info', actionText: 'What are the clinic timings?' },
       { id: 'qr_view_apt', label: 'View My Appointments', actionText: 'Show me my appointments' },
       { id: 'qr_cancel_apt', label: 'Cancel Appointment', actionText: 'I need to cancel my appointment' }
     ];
@@ -397,7 +559,7 @@ async function executeConversationalEngine(
         role: 'assistant',
         type: 'quick-replies',
         timestamp: nowIso,
-        content: `Welcome to **CarePoint Medical Clinic**.\n\nI'm your patient care coordinator at the front desk. I can help you find doctors, check available consultation slots, book visits, or manage your existing appointments. How can I assist you today?`,
+        content: `Welcome to **CarePoint Medical Clinic**.\n\nI'm your patient care coordinator at the front desk. I can help you find doctors, check available consultation slots, book visits, answer clinic questions (timings, parking, fees, holidays), or manage your existing appointments. How can I assist you today?`,
         quickReplies
       }
     };
