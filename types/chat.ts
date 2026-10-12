@@ -12,9 +12,18 @@ export type MessageType =
   | 'booking-confirmation'
   | 'cancellation-confirmation'
   | 'cancellation-success'
+  | 'emergency'
   | 'quick-replies'
   | 'error'
   | 'loading';
+
+export interface EmergencyContacts {
+  hotline: string;
+  hotlineTel: string;
+  mobile: string;
+  mobileTel: string;
+  description?: string;
+}
 
 export interface QuickReply {
   id: string;
@@ -70,6 +79,7 @@ export interface ChatMessage {
   bookingDraft?: BookingDetailsDraft;
   cancellationTarget?: Appointment;
   quickReplies?: QuickReply[];
+  emergencyContacts?: EmergencyContacts;
   toolCalls?: ToolCallData[];
   error?: string;
   isStreaming?: boolean;

@@ -3,13 +3,14 @@
 import React from 'react';
 import { ChatMessage, QuickReply } from '@/types/chat';
 import { Doctor, MedicalService, AvailableSlot, Appointment } from '@/types/api';
-import { Stethoscope, User } from 'lucide-react';
+import { Stethoscope, User, AlertTriangle } from 'lucide-react';
 import { DoctorCard } from './DoctorCard';
 import { ServiceCard } from './ServiceCard';
 import { AvailableSlots } from './AvailableSlots';
 import { AppointmentCard } from './AppointmentCard';
 import { BookingConfirmation } from './BookingConfirmation';
 import { CancellationConfirmation } from './CancellationConfirmation';
+import { EmergencyCard } from './EmergencyCard';
 import { ErrorMessage } from './ErrorMessage';
 import { QuickReplies } from './QuickReplies';
 
@@ -97,10 +98,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl shadow-2xs ${
           isUser
             ? 'bg-slate-800 text-white ring-2 ring-slate-100'
+            : message.type === 'emergency'
+            ? 'bg-rose-600 text-white ring-2 ring-rose-200 animate-pulse'
             : 'bg-teal-600 text-white ring-2 ring-teal-100'
         }`}
       >
-        {isUser ? <User className="h-4 w-4" /> : <Stethoscope className="h-4 w-4" />}
+        {isUser ? (
+          <User className="h-4 w-4" />
+        ) : message.type === 'emergency' ? (
+          <AlertTriangle className="h-4 w-4" />
+        ) : (
+          <Stethoscope className="h-4 w-4" />
+        )}
       </div>
 
       {/* Message Content Container */}
@@ -111,6 +120,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             className={`rounded-2xl px-4 py-3 text-sm shadow-xs ${
               isUser
                 ? 'rounded-tr-sm bg-slate-900 text-white'
+                : message.type === 'emergency'
+                ? 'rounded-tl-sm border-2 border-rose-300 bg-rose-50/70 text-rose-950 font-medium'
                 : 'rounded-tl-sm border border-slate-200/90 bg-white text-slate-800'
             }`}
           >
@@ -203,7 +214,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           </div>
         )}
 
-        {/* 8. Error Message */}
+        {/* 8. Emergency Contacts Card */}
+        {(message.type === 'emergency' || message.emergencyContacts) && (
+          <div className="mt-1 w-full">
+            <EmergencyCard contacts={message.emergencyContacts} />
+          </div>
+        )}
+
+        {/* 9. Error Message */}
         {message.type === 'error' && (
           <div className="mt-1 w-full">
             <ErrorMessage content={message.content} />

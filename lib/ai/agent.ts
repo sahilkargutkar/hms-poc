@@ -2,6 +2,7 @@ import { SYSTEM_PROMPT } from './prompts';
 import { AI_TOOLS } from './tools';
 import { executeAiTool } from './toolHandlers';
 import { getTomorrowDateString } from '@/lib/utils/date';
+import { EMERGENCY_CONFIG, isEmergencyQuery } from '@/lib/constants/emergency';
 import {
   ChatMessage,
   ConversationState,
@@ -14,6 +15,36 @@ import { Doctor, MedicalService, AvailableSlot, Appointment } from '@/types/api'
 const AI_API_KEY = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
 const AI_BASE_URL = process.env.AI_BASE_URL || 'https://api.openai.com/v1';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
+
+/**
+ * Immediate, zero-latency emergency responder
+ */
+export function handleEmergencyRequest(state: ConversationState): ChatResponsePayload {
+  const nowIso = new Date().toISOString();
+  const quickReplies: QuickReply[] = [
+    { id: 'qr_safe_book', label: 'I am safe, book regular appointment', actionText: 'I am safe, I want to book a regular appointment' },
+    { id: 'qr_nearest_er', label: 'Emergency Guidance', actionText: 'What should I do in this emergency?' }
+  ];
+
+  return {
+    updatedState: state,
+    message: {
+      id: `msg_emerg_${Date.now()}`,
+      role: 'assistant',
+      type: 'emergency',
+      timestamp: nowIso,
+      content: `⚠️ **EMERGENCY MEDICAL NOTICE**\n\nIf you or someone with you is experiencing a medical emergency, severe chest pain, shortness of breath, acute heavy bleeding, sudden paralysis, or life-threatening symptoms, **do not wait for a clinic appointment**.\n\nPlease call our urgent care team immediately:\n\n• **24/7 Emergency Hotline:** **${EMERGENCY_CONFIG.hotlineDisplay}**\n• **Duty Doctor Mobile:** **${EMERGENCY_CONFIG.mobileDisplay}**\n\nIf this is a life-threatening crisis, please dial **911** (or your local emergency services) or proceed to the nearest Emergency Room immediately.`,
+      emergencyContacts: {
+        hotline: EMERGENCY_CONFIG.hotlineDisplay,
+        hotlineTel: EMERGENCY_CONFIG.hotlineTel,
+        mobile: EMERGENCY_CONFIG.mobileDisplay,
+        mobileTel: EMERGENCY_CONFIG.mobileTel,
+        description: EMERGENCY_CONFIG.description
+      },
+      quickReplies
+    }
+  };
+}
 
 /**
  * Main AI Receptionist Agent Entrypoint
@@ -38,7 +69,12 @@ export async function runAiReceptionist(payload: ChatRequestPayload): Promise<Ch
     return handleDirectUiAction(action, currentState);
   }
 
-  // 2. If AI API key is configured, execute real LLM function-calling flow
+  // 2. CRITICAL EMERGENCY PROTOCOL: Immediate hotline & mobile sharing
+  if (userPrompt && isEmergencyQuery(userPrompt)) {
+    return handleEmergencyRequest(currentState);
+  }
+
+  // 3. If AI API key is configured, execute real LLM function-calling flow
   if (AI_API_KEY) {
     try {
       return await executeLlmAgentFlow(messages, userPrompt, currentState);
@@ -48,7 +84,7 @@ export async function runAiReceptionist(payload: ChatRequestPayload): Promise<Ch
     }
   }
 
-  // 3. Resilient conversational engine (interprets natural language without requiring live API keys)
+  // 4. Resilient conversational engine (interprets natural language without requiring live API keys)
   return executeConversationalEngine(userPrompt, currentState, messages);
 }
 
@@ -340,7 +376,12 @@ async function executeConversationalEngine(
     }
   }
 
-  // 1. GREETING
+  // 1. EMERGENCY PROTOCOL CHECK
+  if (isEmergencyQuery(text)) {
+    return handleEmergencyRequest(state);
+  }
+
+  // 2. GREETING
   if (/^(hi|hello|hey|good morning|good afternoon|good evening|greetings)\b/i.test(lower) && lower.length < 25) {
     const quickReplies: QuickReply[] = [
       { id: 'qr_book_dentist', label: 'Book a Dentist', actionText: 'I want to see a dentist' },
@@ -362,19 +403,15 @@ async function executeConversationalEngine(
     };
   }
 
-  // 2. MEDICAL ADVICE SAFETY GUARDRAIL
+  // 3. MEDICAL ADVICE SAFETY GUARDRAIL
   if (
     lower.includes('diagnose') ||
     lower.includes('what disease') ||
     lower.includes('prescription') ||
     lower.includes('medication') ||
-    lower.includes('chest pain') ||
-    lower.includes('heart attack') ||
     lower.includes('can you cure') ||
     lower.includes('interpret my test')
   ) {
-    const isEmergency = lower.includes('chest pain') || lower.includes('heart attack') || lower.includes('cannot breathe') || lower.includes('bleeding heavily');
-
     return {
       updatedState: state,
       message: {
@@ -382,9 +419,7 @@ async function executeConversationalEngine(
         role: 'assistant',
         type: 'text',
         timestamp: nowIso,
-        content: isEmergency
-          ? `**EMERGENCY NOTICE**: If you or someone with you is experiencing severe chest pain, shortness of breath, acute heavy bleeding, or life-threatening symptoms, please **call emergency services (911/112) immediately** or go to the nearest emergency department.`
-          : `Our front desk team cannot provide medical diagnoses, treatment plans, or drug prescriptions. I'd be delighted to book an in-person consultation with one of our certified doctors so they can examine you thoroughly.`
+        content: `Our front desk team cannot provide medical diagnoses, treatment plans, or drug prescriptions. I'd be delighted to book an in-person consultation with one of our certified doctors so they can examine you thoroughly.`
       }
     };
   }
@@ -683,14 +718,23 @@ async function executeLlmAgentFlow(
     }
   }
 
+  const isEmerg = isEmergencyQuery(userPrompt) || isEmergencyQuery(responseMsg?.content || '');
+
   return {
     updatedState: state,
     message: {
       id: `msg_${Date.now()}`,
       role: 'assistant',
-      type: 'text',
+      type: isEmerg ? 'emergency' : 'text',
       timestamp: new Date().toISOString(),
-      content: responseMsg?.content || "How else can I assist you with your appointment today?"
+      content: responseMsg?.content || "How else can I assist you with your appointment today?",
+      emergencyContacts: isEmerg ? {
+        hotline: EMERGENCY_CONFIG.hotlineDisplay,
+        hotlineTel: EMERGENCY_CONFIG.hotlineTel,
+        mobile: EMERGENCY_CONFIG.mobileDisplay,
+        mobileTel: EMERGENCY_CONFIG.mobileTel,
+        description: EMERGENCY_CONFIG.description
+      } : undefined
     }
   };
 }

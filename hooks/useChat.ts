@@ -31,8 +31,8 @@ const INITIAL_GREETING_MESSAGE: ChatMessage = {
   quickReplies: [
     { id: 'qr_dentist', label: 'Book a Dentist', actionText: 'I want to see a dentist tomorrow' },
     { id: 'qr_gp', label: 'General Physician', actionText: 'I want to see a general physician' },
-    { id: 'qr_derma', label: 'Dermatologist', actionText: 'I want to consult a dermatologist' },
-    { id: 'qr_apts', label: 'View My Appointments', actionText: 'Show me my appointments' }
+    { id: 'qr_apts', label: 'View My Appointments', actionText: 'Show me my appointments' },
+    { id: 'qr_emergency', label: '🚨 Emergency Contacts', actionText: 'What is the emergency hotline and mobile number?' }
   ]
 };
 

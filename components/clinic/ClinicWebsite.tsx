@@ -671,6 +671,7 @@ export const ClinicWebsite: React.FC<ClinicWebsiteProps> = ({
                   <span>Emergency & Direct Contact</span>
                 </div>
                 <p className="text-xs text-slate-600">Emergency 24/7 Hotline: <strong>+1 (800) 555-CARE</strong></p>
+                <p className="text-xs text-slate-600">On-Call Duty Mobile: <strong>+1 (555) 911-0199</strong></p>
                 <button
                   type="button"
                   onClick={() => onOpenBot()}
