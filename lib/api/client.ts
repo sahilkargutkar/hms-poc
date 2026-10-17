@@ -385,6 +385,19 @@ class ApiClient {
       return this.patientCache.get(cleanedDigits)!;
     }
 
+    // Check if patient already exists and has appointments via updated appointments route
+    try {
+      const existingAppts = await this.getAppointmentsByMobile(formattedPhone);
+      if (existingAppts.length > 0 && existingAppts[0].patientId) {
+        const patientId = existingAppts[0].patientId;
+        this.patientCache.set(formattedPhone, patientId);
+        this.patientCache.set(cleanedDigits, patientId);
+        return patientId;
+      }
+    } catch {
+      // Proceed to registration
+    }
+
     const nameParts = patientName.trim().split(' ');
     const firstName = nameParts[0] || 'Patient';
     const lastName = nameParts.slice(1).join(' ') || 'User';
@@ -419,6 +432,18 @@ class ApiClient {
           this.patientCache.set(cleanedDigits, patientId);
           this.patientCache.set(cand, patientId);
           return patientId;
+        }
+
+        // If patient already registered (409), look up existing patientId via appointments route
+        if (res.status === 409) {
+          const existingAppts = await this.getAppointmentsByMobile(cand);
+          if (existingAppts.length > 0 && existingAppts[0].patientId) {
+            const patientId = existingAppts[0].patientId;
+            this.patientCache.set(formattedPhone, patientId);
+            this.patientCache.set(cleanedDigits, patientId);
+            this.patientCache.set(cand, patientId);
+            return patientId;
+          }
         }
       } catch (e) {
         console.warn('Patient candidate registration retry:', e);
@@ -494,7 +519,7 @@ class ApiClient {
       endTime: apptDto.endAtUtc,
       patientName: params.patientName,
       patientPhone: params.patientPhone,
-      status: apptDto.status === 'Booked' ? 'CONFIRMED' : 'CONFIRMED',
+      status: apptDto.status === 'Cancelled' ? 'CANCELLED' : 'CONFIRMED',
       createdAt: apptDto.createdAtUtc,
       notes: apptDto.reasonForVisit
     };
@@ -520,43 +545,143 @@ class ApiClient {
   }
 
   /**
+   * GET /api/v1/appointments?mobileNumber={mobileNumber}
+   * Directly queries the backend API for appointments registered to a mobile number
+   */
+  async getAppointmentsByMobile(mobileNumber: string): Promise<AppointmentResponseDto[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/appointments?mobileNumber=${encodeURIComponent(mobileNumber)}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+      });
+
+      if (res.status === 404) {
+        return [];
+      }
+
+      if (!res.ok) {
+        return [];
+      }
+
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch (e) {
+      console.warn('Error fetching appointments by mobile:', e);
+      return [];
+    }
+  }
+
+  /**
    * 5. get_patient_appointments
-   * Retrieves registered appointments by phone number from the live backend API
+   * Retrieves registered appointments by phone number from the live backend API (GET /api/v1/appointments?mobileNumber=...)
    */
   async getPatientAppointments(params: GetPatientAppointmentsParams): Promise<Appointment[]> {
     const formattedSearch = formatToE164(params.phone);
     const cleanedDigits = params.phone.replace(/\D/g, '');
 
+    // 1. Check live backend API with candidate formats
+    const phoneCandidates = Array.from(new Set([
+      formattedSearch,
+      params.phone.trim(),
+      params.phone.startsWith('+') ? params.phone : `+${params.phone}`,
+      cleanedDigits.length === 10 ? `+91${cleanedDigits}` : null,
+      cleanedDigits.length === 10 ? `+1${cleanedDigits}` : null,
+      cleanedDigits
+    ])).filter(Boolean) as string[];
+
+    let liveDtos: AppointmentResponseDto[] = [];
+    for (const cand of phoneCandidates) {
+      const found = await this.getAppointmentsByMobile(cand);
+      if (found.length > 0) {
+        liveDtos = found;
+        break;
+      }
+    }
+
+    // Ensure doctors are loaded for resolving doctor metadata
+    if (this.cachedDoctors.length === 0) {
+      await this.findDoctors({});
+    }
+
+    const appointmentsMap = new Map<string, Appointment>();
+
+    const mapDtoToAppointment = async (dto: AppointmentResponseDto): Promise<Appointment> => {
+      let doctor = this.cachedDoctors.find(d => d.id === dto.doctorId);
+      if (!doctor && dto.doctorId) {
+        doctor = (await this.getDoctorById(dto.doctorId)) || undefined;
+      }
+
+      const localRecord = this.bookedAppointmentIds.find(b => b.id === dto.id);
+
+      const doctorName = localRecord?.doctorName || doctor?.name || 'CarePoint Specialist';
+      const specialization = localRecord?.specialization || doctor?.specialization || 'Medical Specialist';
+      const serviceName = localRecord?.serviceName || dto.reasonForVisit || `${specialization} Consultation`;
+      const patientName = localRecord?.patientName || 'Patient';
+      const patientPhone = localRecord?.patientPhone || formattedSearch;
+
+      const isCancelled = dto.status === 'Cancelled' || dto.status === 'NoShow';
+
+      return {
+        id: dto.id,
+        patientId: dto.patientId,
+        doctorId: dto.doctorId,
+        doctorName,
+        specialization,
+        serviceId: localRecord?.serviceId || doctor?.services?.[0]?.id || 'general-consultation',
+        serviceName,
+        startTime: dto.startAtUtc,
+        endTime: dto.endAtUtc,
+        patientName,
+        patientPhone,
+        status: isCancelled ? 'CANCELLED' : 'CONFIRMED',
+        createdAt: dto.createdAtUtc,
+        notes: dto.reasonForVisit || undefined
+      };
+    };
+
+    // Add appointments returned from live API
+    for (const dto of liveDtos) {
+      if (dto.id) {
+        const appt = await mapDtoToAppointment(dto);
+        appointmentsMap.set(dto.id, appt);
+      }
+    }
+
+    // Also check session storage for any recently created appointments
     const matchingRecords = this.bookedAppointmentIds.filter(rec =>
       rec.patientPhone.includes(cleanedDigits) ||
       rec.patientPhone === formattedSearch
     );
 
-    const appointments: Appointment[] = [];
-
     for (const rec of matchingRecords) {
-      const liveAppt = await this.getAppointmentById(rec.id);
-      if (liveAppt) {
-        appointments.push({
-          id: liveAppt.id,
-          patientId: liveAppt.patientId,
-          doctorId: liveAppt.doctorId,
-          doctorName: rec.doctorName,
-          specialization: rec.specialization,
-          serviceId: rec.serviceId,
-          serviceName: rec.serviceName || 'Consultation',
-          startTime: liveAppt.startAtUtc,
-          endTime: liveAppt.endAtUtc,
-          patientName: rec.patientName,
-          patientPhone: rec.patientPhone,
-          status: liveAppt.status === 'Cancelled' ? 'CANCELLED' : 'CONFIRMED',
-          createdAt: liveAppt.createdAtUtc,
-          notes: liveAppt.reasonForVisit
-        });
+      if (!appointmentsMap.has(rec.id)) {
+        const liveAppt = await this.getAppointmentById(rec.id);
+        if (liveAppt) {
+          const appt = await mapDtoToAppointment(liveAppt);
+          appointmentsMap.set(rec.id, appt);
+        } else {
+          appointmentsMap.set(rec.id, {
+            id: rec.id,
+            patientId: '',
+            doctorId: rec.doctorId,
+            doctorName: rec.doctorName,
+            specialization: rec.specialization,
+            serviceId: rec.serviceId,
+            serviceName: rec.serviceName || 'Consultation',
+            startTime: rec.startTime || new Date().toISOString(),
+            endTime: rec.startTime || new Date().toISOString(),
+            patientName: rec.patientName,
+            patientPhone: rec.patientPhone,
+            status: 'CONFIRMED',
+            createdAt: new Date().toISOString()
+          });
+        }
       }
     }
 
-    return appointments;
+    return Array.from(appointmentsMap.values()).sort((a, b) =>
+      new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
+    );
   }
 
   /**
@@ -615,14 +740,23 @@ class ApiClient {
     const startAtUtc = new Date(params.newStartTime.endsWith('Z') ? params.newStartTime : params.newStartTime + 'Z').toISOString();
     const endAtUtc = new Date(params.newEndTime.endsWith('Z') ? params.newEndTime : params.newEndTime + 'Z').toISOString();
 
+    let doctorId = params.doctorId;
+    let existingAppt: AppointmentResponseDto | null = null;
+    if (!doctorId) {
+      existingAppt = await this.getAppointmentById(params.appointmentId);
+      if (existingAppt?.doctorId) {
+        doctorId = existingAppt.doctorId;
+      }
+    }
+
     const res = await fetch(`${this.baseUrl}/appointments/${params.appointmentId}`, {
       method: 'PUT',
       headers: this.getHeaders(),
       body: JSON.stringify({
-        doctorId: params.doctorId || '',
+        doctorId: doctorId || '',
         startAtUtc,
         endAtUtc,
-        reasonForVisit: params.reasonForVisit || 'Rescheduled Consultation'
+        reasonForVisit: params.reasonForVisit || existingAppt?.reasonForVisit || 'Rescheduled Consultation'
       }),
     });
 
@@ -637,19 +771,31 @@ class ApiClient {
 
     const updatedDto: AppointmentResponseDto = await res.json();
 
+    let doctorName = 'CarePoint Specialist';
+    let specialization = 'Medical Specialist';
+    const doc = this.cachedDoctors.find(d => d.id === updatedDto.doctorId) || (await this.getDoctorById(updatedDto.doctorId));
+    if (doc) {
+      doctorName = doc.name;
+      specialization = doc.specialization;
+    }
+
+    const localRecord = this.bookedAppointmentIds.find(b => b.id === updatedDto.id);
+
     const appointment: Appointment = {
       id: updatedDto.id,
       patientId: updatedDto.patientId,
       doctorId: updatedDto.doctorId,
-      doctorName: 'Doctor',
-      specialization: 'Specialist',
+      doctorName: localRecord?.doctorName || doctorName,
+      specialization: localRecord?.specialization || specialization,
+      serviceId: localRecord?.serviceId || 'general-consultation',
+      serviceName: localRecord?.serviceName || updatedDto.reasonForVisit || `${specialization} Consultation`,
       startTime: updatedDto.startAtUtc,
       endTime: updatedDto.endAtUtc,
-      patientName: 'Patient',
-      patientPhone: '',
+      patientName: localRecord?.patientName || 'Patient',
+      patientPhone: localRecord?.patientPhone || '',
       status: 'RESCHEDULED',
       createdAt: updatedDto.updatedAtUtc,
-      notes: updatedDto.reasonForVisit
+      notes: updatedDto.reasonForVisit || undefined
     };
 
     return {

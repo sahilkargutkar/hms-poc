@@ -256,6 +256,10 @@ export interface GetPatientAppointmentsParams {
   phone: string;
 }
 
+export interface GetAppointmentsByMobileParams {
+  mobileNumber: string;
+}
+
 export interface CancelAppointmentParams {
   appointmentId: string;
   reason?: string;
