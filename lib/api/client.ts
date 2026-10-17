@@ -627,7 +627,7 @@ class ApiClient {
         doctorId: dto.doctorId,
         doctorName,
         specialization,
-        serviceId: localRecord?.serviceId || doctor?.services?.[0]?.id || 'general-consultation',
+        serviceId: localRecord?.serviceId || 'general-consultation',
         serviceName,
         startTime: dto.startAtUtc,
         endTime: dto.endAtUtc,

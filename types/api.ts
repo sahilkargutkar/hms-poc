@@ -170,6 +170,7 @@ export interface Doctor {
   licenseNumber?: string;
   timeZoneId?: string;
   rawAvailability?: DoctorAvailabilityDto[];
+  services?: MedicalService[];
 }
 
 export interface MedicalService {
