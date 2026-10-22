@@ -31,7 +31,9 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
     hour12: true
   });
 
-  const isCancelled = appointment.status === 'CANCELLED';
+  const statusUpper = (appointment.status || '').toUpperCase();
+  const isCancelled = statusUpper === 'CANCELLED' || statusUpper === 'NOSHOW';
+  const isConfirmed = statusUpper === 'CONFIRMED' || statusUpper === 'BOOKED';
 
   return (
     <div
@@ -47,19 +49,19 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
           Ref: {appointment.id}
         </span>
         <div>
-          {appointment.status === 'CONFIRMED' && (
+          {isConfirmed && (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-600/20">
               <CheckCircle2 className="h-3.5 w-3.5" />
               Confirmed
             </span>
           )}
-          {appointment.status === 'CANCELLED' && (
+          {isCancelled && (
             <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-600/20">
               <XCircle className="h-3.5 w-3.5" />
               Cancelled
             </span>
           )}
-          {appointment.status === 'RESCHEDULED' && (
+          {statusUpper === 'RESCHEDULED' && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-600/20">
               <RefreshCw className="h-3.5 w-3.5" />
               Rescheduled
@@ -99,7 +101,7 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
       </div>
 
       {/* Post Appointment Google Review Link */}
-      {!isCancelled && appointment.status === 'CONFIRMED' && (
+      {!isCancelled && isConfirmed && (
         <div className="mt-3 rounded-lg border border-amber-200/90 bg-gradient-to-r from-amber-50/80 via-yellow-50/50 to-amber-50/80 p-2.5 text-xs shadow-2xs">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-amber-900 font-medium">

@@ -426,6 +426,71 @@ async function handleDirectUiAction(
       }
     }
 
+    case 'VIEW_APPOINTMENTS': {
+      const phoneToSearch = action.payload?.phone || state.patient.phone;
+      if (!phoneToSearch) {
+        state.pendingAction = 'awaiting_phone_for_lookup';
+        const quickReplies: QuickReply[] = [
+          { id: 'qr_test_1', label: 'Use: 9876543210', actionText: '9876543210' },
+          { id: 'qr_test_2', label: 'Use: 9820123456', actionText: '9820123456' },
+          { id: 'qr_test_3', label: 'Use: 9820123256', actionText: '9820123256' }
+        ];
+
+        return {
+          updatedState: state,
+          message: {
+            id: `msg_${Date.now()}`,
+            role: 'assistant',
+            type: 'text',
+            timestamp: nowIso,
+            content: `Sure, I can help you with your appointments.\n\nCould you please provide the **mobile phone number** used when booking?`,
+            quickReplies
+          }
+        };
+      }
+
+      state.patient.phone = phoneToSearch;
+      state.pendingAction = 'idle';
+
+      const aptsRes = await executeAiTool('get_patient_appointments', { phone: phoneToSearch });
+      const appointments: Appointment[] = aptsRes.result || [];
+
+      if (appointments.length === 0) {
+        return {
+          updatedState: state,
+          message: {
+            id: `msg_${Date.now()}`,
+            role: 'assistant',
+            type: 'text',
+            timestamp: nowIso,
+            content: `I couldn't find any active appointments under **${phoneToSearch}** in our clinic system.\n\nWould you like to book a new appointment or try another phone number?`,
+            quickReplies: [
+              { id: 'qr_book', label: 'Book an Appointment', actionText: 'I want to book an appointment' },
+              { id: 'qr_test_phone', label: 'Check 9820123456', actionText: '9820123456' }
+            ]
+          }
+        };
+      }
+
+      const quickReplies: QuickReply[] = [
+        { id: 'qr_book_another', label: 'Book Another Appointment', actionText: 'I want to book an appointment' },
+        { id: 'qr_timings', label: 'Clinic Timings & Info', actionText: 'What are the clinic timings?' }
+      ];
+
+      return {
+        updatedState: state,
+        message: {
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          type: 'appointment-list',
+          timestamp: nowIso,
+          content: `I found **${appointments.length}** appointment(s) registered for **${phoneToSearch}**:`,
+          appointments,
+          quickReplies
+        }
+      };
+    }
+
     default:
       return executeConversationalEngine('', state, []);
   }
@@ -466,6 +531,61 @@ function extractPatientInfo(text: string): { phone: string | null; name: string 
   }
 
   return { phone, name };
+}
+
+/**
+ * Detects if user intent is to view, check, list, or look up existing appointments or bookings
+ */
+function isAppointmentLookupQuery(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+
+  // Explicit phrases for viewing/checking appointments
+  const phrases = [
+    'my appointment',
+    'my appointments',
+    'view appointment',
+    'view appointments',
+    'show appointment',
+    'show appointments',
+    'show my',
+    'view my',
+    'check appointment',
+    'check appointments',
+    'check my',
+    'see appointment',
+    'see appointments',
+    'see my',
+    'find appointment',
+    'find appointments',
+    'booked appointment',
+    'booked appointments',
+    'booked db',
+    'my booking',
+    'my bookings',
+    'view booking',
+    'view bookings',
+    'check booking',
+    'check bookings',
+    'appointment status',
+    'status of appointment',
+    'existing appointment',
+    'existing appointments',
+    'appointment list',
+    'list appointment',
+    'list appointments',
+    'track appointment',
+    'lookup appointment',
+    'appointments',
+    'bookings'
+  ];
+
+  if (phrases.some((p) => lower.includes(p))) {
+    return true;
+  }
+
+  // Regex fallback: e.g. "can I see my bookings", "where is my appointment"
+  const lookupRegex = /\b(view|see|check|show|find|track|get|lookup|list)\b.*\b(appointment|appointments|booking|bookings)\b/i;
+  return lookupRegex.test(lower);
 }
 
 /**
@@ -648,18 +768,24 @@ async function executeConversationalEngine(
   }
 
   // 3. VIEW APPOINTMENTS OR CANCEL INTENT
-  if (
-    lower.includes('cancel') ||
-    lower.includes('my appointment') ||
-    lower.includes('show my') ||
-    lower.includes('view my') ||
-    lower.includes('reschedule')
-  ) {
-    const phoneToSearch = state.patient.phone || (phoneMatch ? phoneMatch[0].replace(/\D/g, '') : null);
+  const isLookup = isAppointmentLookupQuery(text);
+  const isCancel = lower.includes('cancel') || lower.includes('reschedule');
+  const isAwaitingPhone = state.pendingAction === 'awaiting_phone_for_lookup';
+  const isPurePhoneLookup =
+    Boolean(extracted.phone) &&
+    !state.doctor &&
+    !state.selectedSlot &&
+    text.replace(/[^\d+()\s-]/g, '').trim().length >= 7;
+
+  if (isLookup || isCancel || isAwaitingPhone || isPurePhoneLookup) {
+    const phoneToSearch = extracted.phone || state.patient.phone || (phoneMatch ? phoneMatch[0].replace(/\D/g, '') : null);
 
     if (!phoneToSearch) {
+      state.pendingAction = 'awaiting_phone_for_lookup';
       const quickReplies: QuickReply[] = [
-        { id: 'qr_use_test_phone', label: 'Use Test Phone: 9876543210', actionText: '9876543210' }
+        { id: 'qr_test_1', label: 'Use: 9876543210', actionText: '9876543210' },
+        { id: 'qr_test_2', label: 'Use: 9820123456', actionText: '9820123456' },
+        { id: 'qr_test_3', label: 'Use: 9820123256', actionText: '9820123256' }
       ];
 
       return {
@@ -675,6 +801,9 @@ async function executeConversationalEngine(
       };
     }
 
+    state.patient.phone = phoneToSearch;
+    state.pendingAction = 'idle';
+
     const aptsRes = await executeAiTool('get_patient_appointments', { phone: phoneToSearch });
     const appointments: Appointment[] = aptsRes.result || [];
 
@@ -686,10 +815,20 @@ async function executeConversationalEngine(
           role: 'assistant',
           type: 'text',
           timestamp: nowIso,
-          content: `I couldn't find any active appointments under **${phoneToSearch}**. Would you like to schedule a new visit?`
+          content: `I couldn't find any active appointments under **${phoneToSearch}** in our clinic system.\n\nWould you like to schedule a new visit?`,
+          quickReplies: [
+            { id: 'qr_book_dentist', label: 'Book a Dentist', actionText: 'I want to see a dentist' },
+            { id: 'qr_book_physician', label: 'Book a Physician', actionText: 'I want to see a general physician' },
+            { id: 'qr_try_test_phone', label: 'Check 9820123456', actionText: '9820123456' }
+          ]
         }
       };
     }
+
+    const quickReplies: QuickReply[] = [
+      { id: 'qr_book_another', label: 'Book Another Appointment', actionText: 'I want to book an appointment' },
+      { id: 'qr_timings', label: 'Clinic Timings & Info', actionText: 'What are the clinic timings?' }
+    ];
 
     return {
       updatedState: state,
@@ -699,7 +838,8 @@ async function executeConversationalEngine(
         type: 'appointment-list',
         timestamp: nowIso,
         content: `I found **${appointments.length}** appointment(s) registered for **${phoneToSearch}**:`,
-        appointments
+        appointments,
+        quickReplies
       }
     };
   }
@@ -802,7 +942,15 @@ async function executeConversationalEngine(
   else if (lower.includes('eye') || lower.includes('vision') || lower.includes('ophtha')) specialtyQuery = 'ophthalmologist';
   else if (lower.includes('child') || lower.includes('pediatric') || lower.includes('baby')) specialtyQuery = 'pediatrician';
   else if (lower.includes('heart') || lower.includes('cardio')) specialtyQuery = 'cardiologist';
-  else if (lower.includes('doctor') || lower.includes('physician') || lower.includes('fever') || lower.includes('general') || (lower.includes('appointment') && !lower.includes('confirm'))) {
+  else if (
+    lower.includes('physician') ||
+    lower.includes('fever') ||
+    lower.includes('general') ||
+    lower.includes('cough') ||
+    lower.includes('cold') ||
+    (/\b(doctor|specialist)\b/.test(lower) && !lower.includes('other doc')) ||
+    (/\b(book|schedule|want|need|make|new)\b.*\b(appointment|consultation|visit)\b/.test(lower))
+  ) {
     specialtyQuery = 'general physician';
   }
 

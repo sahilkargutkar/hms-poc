@@ -107,28 +107,35 @@ class PatientStore {
   }
 
   public getPatientId(phone: string): string | null {
+    this.load();
     const cleaned = phone.replace(/\D/g, '');
-    const formatted = cleaned.length === 10 ? `+91${cleaned}` : `+${cleaned}`;
+    const last10 = cleaned.slice(-10);
+    const formatted = last10.length === 10 ? `+91${last10}` : `+${cleaned}`;
 
     return (
       this.data.patientCache[formatted] ||
       this.data.patientCache[cleaned] ||
+      this.data.patientCache[last10] ||
       this.data.patientCache[phone] ||
       null
     );
   }
 
   public setPatientId(phone: string, patientId: string): void {
+    this.load();
     const cleaned = phone.replace(/\D/g, '');
-    const formatted = cleaned.length === 10 ? `+91${cleaned}` : `+${cleaned}`;
+    const last10 = cleaned.slice(-10);
+    const formatted = last10.length === 10 ? `+91${last10}` : `+${cleaned}`;
 
     this.data.patientCache[formatted] = patientId;
     this.data.patientCache[cleaned] = patientId;
+    if (last10) this.data.patientCache[last10] = patientId;
     this.data.patientCache[phone] = patientId;
     this.save();
   }
 
   public addBookedAppointment(record: StoredAppointmentRecord): void {
+    this.load();
     // Prevent duplicate entries
     this.data.bookedAppointments = this.data.bookedAppointments.filter(
       (b) => b.id !== record.id
@@ -138,23 +145,28 @@ class PatientStore {
   }
 
   public getBookedAppointments(phone?: string): StoredAppointmentRecord[] {
+    this.load();
     if (!phone) return [...this.data.bookedAppointments];
 
     const cleaned = phone.replace(/\D/g, '');
-    const formatted = cleaned.length === 10 ? `+91${cleaned}` : `+${cleaned}`;
+    const last10 = cleaned.slice(-10);
+    const formatted = last10.length === 10 ? `+91${last10}` : `+${cleaned}`;
 
     return this.data.bookedAppointments.filter((b) => {
       const bCleaned = b.patientPhone.replace(/\D/g, '');
+      const bLast10 = bCleaned.slice(-10);
       return (
         b.patientPhone === formatted ||
         b.patientPhone === cleaned ||
         b.patientPhone === phone ||
-        (cleaned.length >= 10 && bCleaned.includes(cleaned.slice(-10)))
+        (last10.length >= 7 && bLast10 === last10) ||
+        (last10.length >= 7 && bCleaned.includes(last10))
       );
     });
   }
 
   public removeBookedAppointment(id: string): void {
+    this.load();
     this.data.bookedAppointments = this.data.bookedAppointments.filter(
       (b) => b.id !== id
     );
@@ -162,6 +174,7 @@ class PatientStore {
   }
 
   public markAppointmentCancelled(id: string): void {
+    this.load();
     const appt = this.data.bookedAppointments.find((b) => b.id === id);
     if (appt) {
       appt.status = 'CANCELLED';
@@ -170,6 +183,7 @@ class PatientStore {
   }
 
   public getAllCachedPatientIds(): Record<string, string> {
+    this.load();
     return { ...this.data.patientCache };
   }
 }

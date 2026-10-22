@@ -655,11 +655,14 @@ class ApiClient {
     ])).filter(Boolean) as string[];
 
     let liveDtos: AppointmentResponseDto[] = [];
+    const seenDtoIds = new Set<string>();
     for (const cand of phoneCandidates) {
       const found = await this.getAppointmentsByMobile(cand);
-      if (found.length > 0) {
-        liveDtos = found;
-        break;
+      for (const f of found) {
+        if (f && f.id && !seenDtoIds.has(f.id)) {
+          seenDtoIds.add(f.id);
+          liveDtos.push(f);
+        }
       }
     }
 
@@ -685,7 +688,7 @@ class ApiClient {
       const patientName = localRecord?.patientName || 'Patient';
       const patientPhone = localRecord?.patientPhone || formattedSearch;
 
-      const isCancelled = dto.status === 'Cancelled' || dto.status === 'NoShow';
+      const isCancelled = dto.status === 'Cancelled' || dto.status === 'NoShow' || localRecord?.status === 'CANCELLED';
 
       return {
         id: dto.id,
@@ -717,7 +720,8 @@ class ApiClient {
     const localMatches = [
       ...patientStore.getBookedAppointments(params.phone),
       ...this.bookedAppointmentIds.filter(rec =>
-        rec.patientPhone.includes(cleanedDigits) || rec.patientPhone === formattedSearch
+        (cleanedDigits.length >= 7 && rec.patientPhone.replace(/\D/g, '').slice(-10) === cleanedDigits) ||
+        rec.patientPhone === formattedSearch
       )
     ];
 
@@ -728,19 +732,24 @@ class ApiClient {
           const appt = await mapDtoToAppointment(liveAppt);
           appointmentsMap.set(rec.id, appt);
         } else {
+          let doctor = this.cachedDoctors.find(d => d.id === rec.doctorId);
+          if (!doctor && rec.doctorId) {
+            doctor = (await this.getDoctorById(rec.doctorId)) || undefined;
+          }
+
           appointmentsMap.set(rec.id, {
             id: rec.id,
             patientId: '',
             doctorId: rec.doctorId,
-            doctorName: rec.doctorName,
-            specialization: rec.specialization,
-            serviceId: rec.serviceId,
-            serviceName: rec.serviceName || 'Consultation',
+            doctorName: rec.doctorName || doctor?.name || 'CarePoint Specialist',
+            specialization: rec.specialization || doctor?.specialization || 'Medical Specialist',
+            serviceId: rec.serviceId || 'general-consultation',
+            serviceName: rec.serviceName || `${rec.specialization || 'Medical'} Consultation`,
             startTime: rec.startTime || new Date().toISOString(),
             endTime: rec.endTime || rec.startTime || new Date().toISOString(),
-            patientName: rec.patientName,
-            patientPhone: rec.patientPhone,
-            status: (rec.status as any) || 'CONFIRMED',
+            patientName: rec.patientName || 'Patient',
+            patientPhone: rec.patientPhone || formattedSearch,
+            status: ((rec.status as string)?.toUpperCase() === 'CANCELLED' ? 'CANCELLED' : 'CONFIRMED'),
             createdAt: rec.createdAt || new Date().toISOString()
           });
         }

@@ -55,7 +55,7 @@ export interface ConversationState {
     phone: string | null;
   };
   currentAppointment: Appointment | null; // For cancellation or rescheduling
-  pendingAction?: 'awaiting_slot' | 'awaiting_patient_info' | 'awaiting_otp' | 'awaiting_confirmation' | 'awaiting_cancellation_confirm' | 'idle';
+  pendingAction?: 'awaiting_slot' | 'awaiting_patient_info' | 'awaiting_otp' | 'awaiting_confirmation' | 'awaiting_cancellation_confirm' | 'awaiting_phone_for_lookup' | 'idle';
   isOtpVerified?: boolean;
   otp?: string | null;
 }
@@ -94,7 +94,7 @@ export interface ChatRequestPayload {
   conversationState: ConversationState;
   userPrompt: string;
   action?: {
-    type: 'SELECT_DOCTOR' | 'SELECT_SERVICE' | 'SELECT_SLOT' | 'CONFIRM_BOOKING' | 'REQUEST_CANCEL' | 'CONFIRM_CANCEL' | 'CUSTOM';
+    type: 'SELECT_DOCTOR' | 'SELECT_SERVICE' | 'SELECT_SLOT' | 'CONFIRM_BOOKING' | 'REQUEST_CANCEL' | 'CONFIRM_CANCEL' | 'VIEW_APPOINTMENTS' | 'CUSTOM';
     payload?: any;
   };
 }

@@ -4,6 +4,7 @@ import { useState, useCallback, useRef } from 'react';
 import {
   ChatMessage,
   ConversationState,
+  ChatRequestPayload,
   ChatResponsePayload,
   QuickReply
 } from '@/types/chat';
@@ -50,7 +51,7 @@ export function useChat() {
   const sendMessage = useCallback(
     async (
       userText?: string,
-      action?: { type: 'SELECT_DOCTOR' | 'SELECT_SERVICE' | 'SELECT_SLOT' | 'CONFIRM_BOOKING' | 'REQUEST_CANCEL' | 'CONFIRM_CANCEL' | 'CUSTOM'; payload?: any }
+      action?: ChatRequestPayload['action']
     ) => {
       if (isLoading) return;
 
@@ -158,6 +159,10 @@ export function useChat() {
     sendMessage(undefined, { type: 'CONFIRM_CANCEL', payload: appointment });
   }, [sendMessage]);
 
+  const viewAppointments = useCallback((phone?: string) => {
+    sendMessage(undefined, { type: 'VIEW_APPOINTMENTS', payload: { phone } });
+  }, [sendMessage]);
+
   const handleQuickReply = useCallback((reply: QuickReply) => {
     sendMessage(reply.actionText);
   }, [sendMessage]);
@@ -186,6 +191,7 @@ export function useChat() {
     confirmBooking,
     requestCancel,
     confirmCancel,
+    viewAppointments,
     handleQuickReply,
     resetChat
   };
