@@ -438,13 +438,36 @@ class ApiClient {
           }
         }
 
-        // If no appointments exist yet for this registered patient, use cached fallback
-        const fallback =
-          patientStore.getPatientId(formattedPhone) ||
-          Array.from(this.patientCache.values())[0] ||
-          '6ac889e3333ff75177183283';
-        patientStore.setPatientId(formattedPhone, fallback);
-        return fallback;
+        // If no appointments exist yet for this registered patient, try GET /patients?mobileNumber=
+        try {
+          for (const cand of [formattedPhone, `+91${cleanedDigits}`, cleanedDigits]) {
+            const pRes = await fetch(
+              `${this.baseUrl}/patients?mobileNumber=${encodeURIComponent(cand)}`,
+              { method: 'GET', headers: this.getHeaders() }
+            );
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              const patients = Array.isArray(pData) ? pData : (pData.patients || []);
+              if (patients.length > 0 && patients[0].id) {
+                const patientId = patients[0].id as string;
+                patientStore.setPatientId(formattedPhone, patientId);
+                this.patientCache.set(formattedPhone, patientId);
+                this.patientCache.set(cleanedDigits, patientId);
+                return patientId;
+              }
+            }
+          }
+        } catch (pErr) {
+          console.warn('Could not query /patients endpoint on 409:', pErr);
+        }
+
+        // Absolute last resort: use the first available cached patient ID
+        const fallback = patientStore.getPatientId(formattedPhone) || Array.from(this.patientCache.values())[0] || null;
+        if (fallback) {
+          patientStore.setPatientId(formattedPhone, fallback);
+          return fallback;
+        }
+        throw new Error(`Patient already exists but patient ID could not be resolved for ${formattedPhone}. Please contact reception.`);
       }
 
       const errText = await res.text().catch(() => '');
@@ -542,7 +565,7 @@ class ApiClient {
         doctorName,
         specialization,
         serviceId: params.serviceId || 'general-consultation',
-        serviceName: params.notes || `${specialization} Consultation`,
+        serviceName: params.reasonForVisit || params.notes || `${specialization} Consultation`,
         startTime: apptDto.startAtUtc,
         endTime: apptDto.endAtUtc,
         patientName: params.patientName,

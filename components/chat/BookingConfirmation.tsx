@@ -19,14 +19,24 @@ export const BookingConfirmation: React.FC<BookingConfirmationProps> = ({
 }) => {
   const { doctor, service, selectedSlot, patient } = draft;
 
-  const formattedDate = selectedSlot?.startTime
-    ? new Date(selectedSlot.startTime).toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      })
-    : 'Selected Date';
+  const formattedDate = (() => {
+    if (!selectedSlot?.startTime) return 'Selected Date';
+    try {
+      const datePart = selectedSlot.startTime.includes('T')
+        ? selectedSlot.startTime.split('T')[0]
+        : selectedSlot.startTime.substring(0, 10);
+      const [y, m, d] = datePart.split('-').map(Number);
+      if (y && m && d) {
+        return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+          weekday: 'long',
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        });
+      }
+    } catch { /* fall through */ }
+    return 'Selected Date';
+  })();
 
   const formatSlotTime = (isoStr?: string) => {
     if (!isoStr) return 'Selected Time';
@@ -38,11 +48,8 @@ export const BookingConfirmation: React.FC<BookingConfirmationProps> = ({
         const displayH = h % 12 === 0 ? 12 : h % 12;
         return `${displayH}:${m.toString().padStart(2, '0')} ${period}`;
       }
-      return new Date(isoStr).toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      });
+      // Fallback: parse raw time string to avoid timezone shift
+      return isoStr.substring(11, 16) || 'Selected Time';
     } catch {
       return isoStr;
     }

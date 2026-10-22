@@ -31,14 +31,18 @@ export const AvailableSlots: React.FC<AvailableSlotsProps> = ({
     );
   }
 
-  // Format date display
-  const formattedDate = selectedDate
-    ? new Date(selectedDate).toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'short',
-        day: 'numeric'
-      })
-    : 'Upcoming Available Date';
+  // Format date display (parse parts directly to avoid UTC offset shifts)
+  const formattedDate = (() => {
+    if (!selectedDate) return 'Upcoming Available Date';
+    try {
+      const clean = selectedDate.includes('T') ? selectedDate.split('T')[0] : selectedDate;
+      const [y, m, d] = clean.split('-').map(Number);
+      if (y && m && d) {
+        return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+      }
+    } catch { /* fall through */ }
+    return selectedDate;
+  })();
 
   // Group slots into Morning, Afternoon, Evening based on time
   const morningSlots: AvailableSlot[] = [];
