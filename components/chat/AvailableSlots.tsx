@@ -40,13 +40,19 @@ export const AvailableSlots: React.FC<AvailableSlotsProps> = ({
       })
     : 'Upcoming Available Date';
 
-  // Group slots into Morning, Afternoon, Evening
+  // Group slots into Morning, Afternoon, Evening based on time
   const morningSlots: AvailableSlot[] = [];
   const afternoonSlots: AvailableSlot[] = [];
   const eveningSlots: AvailableSlot[] = [];
 
   slots.forEach((slot) => {
-    const hour = new Date(slot.startTime).getHours();
+    let hour = 9;
+    if (slot.startTime.includes('T')) {
+      hour = parseInt(slot.startTime.split('T')[1].substring(0, 2), 10);
+    } else {
+      hour = new Date(slot.startTime).getHours();
+    }
+
     if (hour < 12) {
       morningSlots.push(slot);
     } else if (hour < 17) {
@@ -58,6 +64,13 @@ export const AvailableSlots: React.FC<AvailableSlotsProps> = ({
 
   const renderSlotTime = (isoString: string) => {
     try {
+      const timePart = isoString.includes('T') ? isoString.split('T')[1].substring(0, 5) : '';
+      if (timePart && timePart.includes(':')) {
+        const [h, m] = timePart.split(':').map(Number);
+        const period = h >= 12 ? 'PM' : 'AM';
+        const displayH = h % 12 === 0 ? 12 : h % 12;
+        return `${displayH}:${m.toString().padStart(2, '0')} ${period}`;
+      }
       const d = new Date(isoString);
       return d.toLocaleTimeString('en-US', {
         hour: 'numeric',

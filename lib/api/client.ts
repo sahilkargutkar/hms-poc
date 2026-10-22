@@ -26,6 +26,7 @@ import {
   EmergencyDetectionResponseDto,
   DayOfWeek
 } from '@/types/api';
+import { patientStore, StoredAppointmentRecord } from '@/lib/data/patientStore';
 
 const DEFAULT_API_BASE_URL = 'https://medideskapi-h4bmcqfabthyc5h9.westus3-01.azurewebsites.net/api/v1';
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL?.trim() || DEFAULT_API_BASE_URL).replace(/\/$/, '');
@@ -36,26 +37,18 @@ function formatToE164(phone: string): string {
   if (cleaned.startsWith('+')) {
     return cleaned;
   }
-  if (cleaned.length === 10) {
-    return `+91${cleaned}`;
+  const digits = cleaned.replace(/\D/g, '');
+  if (digits.length === 10) {
+    return `+91${digits}`;
   }
-  return `+${cleaned}`;
+  if (digits.startsWith('91') && digits.length === 12) {
+    return `+${digits}`;
+  }
+  return `+${digits}`;
 }
 
 // Map day index to DayOfWeek
 const DAYS_OF_WEEK: DayOfWeek[] = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-interface StoredAppointmentRecord {
-  id: string;
-  patientPhone: string;
-  patientName: string;
-  doctorId: string;
-  doctorName: string;
-  specialization: string;
-  serviceId?: string;
-  serviceName?: string;
-  startTime?: string;
-}
 
 class ApiClient {
   private baseUrl: string;
@@ -66,24 +59,14 @@ class ApiClient {
 
   constructor() {
     this.baseUrl = API_BASE_URL;
-    // Pre-cache known valid live patient IDs on backend
-    this.patientCache.set('+919876543210', '6ac889e3333ff75177183283');
-    this.patientCache.set('9876543210', '6ac889e3333ff75177183283');
+    // Load pre-cached and disk-persisted patients
+    const allCached = patientStore.getAllCachedPatientIds();
+    for (const [phone, id] of Object.entries(allCached)) {
+      this.patientCache.set(phone, id);
+    }
 
     // Pre-seed demo appointment mapped to live Azure backend record
-    this.bookedAppointmentIds = [
-      {
-        id: '6ac889ec333ff75177183284',
-        patientPhone: '+919876543210',
-        patientName: 'John Doe',
-        doctorId: '6ac747007905d54b1a59b650',
-        doctorName: 'Dr. Rajesh Sharma',
-        specialization: 'Dentist',
-        serviceId: 'srv_6ac747007905d54b1a59b650_1',
-        serviceName: 'Comprehensive Dental Examination',
-        startTime: '2026-10-10T10:00:00+00:00'
-      }
-    ];
+    this.bookedAppointmentIds = patientStore.getBookedAppointments();
   }
 
   public setAuthToken(token: string | null) {
@@ -336,37 +319,18 @@ class ApiClient {
       }
     }
 
-    // If doctor has generic schedule or weekend on-call
-    if (slots.length === 0) {
-      const defaultTimes = [
-        { start: '09:00:00', end: '09:30:00' },
-        { start: '10:00:00', end: '10:30:00' },
-        { start: '11:00:00', end: '11:30:00' },
-        { start: '14:00:00', end: '14:30:00' },
-        { start: '15:00:00', end: '15:30:00' },
-        { start: '16:00:00', end: '16:30:00' },
-        { start: '17:00:00', end: '17:30:00' }
-      ];
-
-      for (const t of defaultTimes) {
-        slots.push({
-          doctorId: doctor.id,
-          serviceId: params.serviceId,
-          startTime: `${params.date}T${t.start}`,
-          endTime: `${params.date}T${t.end}`
-        });
-      }
-    }
-
-    // Filter out already booked slots for this doctor
+    // Filter out already booked slots for this doctor from local records
     const bookedTimes = new Set(
-      this.bookedAppointmentIds
-        .filter(b => b.doctorId === doctor.id)
-        .map(b => b.startTime ? new Date(b.startTime).toISOString() : '')
+      patientStore
+        .getBookedAppointments()
+        .filter((b) => b.doctorId === doctor.id && b.status !== 'CANCELLED')
+        .map((b) => (b.startTime ? new Date(b.startTime).toISOString() : ''))
     );
 
-    return slots.filter(s => {
-      const slotIso = new Date(s.startTime.endsWith('Z') ? s.startTime : s.startTime + 'Z').toISOString();
+    return slots.filter((s) => {
+      const slotIso = new Date(
+        s.startTime.endsWith('Z') ? s.startTime : s.startTime + 'Z'
+      ).toISOString();
       return !bookedTimes.has(slotIso);
     });
   }
@@ -374,9 +338,23 @@ class ApiClient {
   /**
    * Helper: create or ensure patient exists in backend API
    */
-  async getOrCreatePatient(patientName: string, patientPhone: string, email?: string): Promise<string> {
+  async getOrCreatePatient(
+    patientName: string,
+    patientPhone: string,
+    email?: string
+  ): Promise<string> {
     const formattedPhone = formatToE164(patientPhone);
     const cleanedDigits = patientPhone.replace(/\D/g, '').slice(-10);
+
+    // 1. Check persistent patientStore
+    const storedId =
+      patientStore.getPatientId(formattedPhone) ||
+      patientStore.getPatientId(cleanedDigits);
+    if (storedId) {
+      this.patientCache.set(formattedPhone, storedId);
+      this.patientCache.set(cleanedDigits, storedId);
+      return storedId;
+    }
 
     if (this.patientCache.has(formattedPhone)) {
       return this.patientCache.get(formattedPhone)!;
@@ -385,77 +363,99 @@ class ApiClient {
       return this.patientCache.get(cleanedDigits)!;
     }
 
-    // Check if patient already exists and has appointments via updated appointments route
+    // 2. Check if patient already exists and has appointments via backend API
     try {
-      const existingAppts = await this.getAppointmentsByMobile(formattedPhone);
-      if (existingAppts.length > 0 && existingAppts[0].patientId) {
-        const patientId = existingAppts[0].patientId;
+      const candidates = Array.from(
+        new Set([
+          formattedPhone,
+          cleanedDigits,
+          `+${cleanedDigits}`,
+          `+91${cleanedDigits}`
+        ])
+      );
+      for (const cand of candidates) {
+        const existingAppts = await this.getAppointmentsByMobile(cand);
+        if (existingAppts.length > 0 && existingAppts[0].patientId) {
+          const patientId = existingAppts[0].patientId;
+          patientStore.setPatientId(formattedPhone, patientId);
+          this.patientCache.set(formattedPhone, patientId);
+          this.patientCache.set(cleanedDigits, patientId);
+          return patientId;
+        }
+      }
+    } catch (e) {
+      console.warn('Error checking existing appointments for patient:', e);
+    }
+
+    // 3. Register patient with their actual phone number (no fake random numbers)
+    const nameParts = patientName.trim().split(/\s+/);
+    const firstName = nameParts[0] || 'Patient';
+    const lastName = nameParts.slice(1).join(' ') || 'User';
+
+    const createPayload: CreatePatientRequestDto = {
+      firstName,
+      lastName,
+      mobileNumber: formattedPhone,
+      email:
+        email ||
+        `${firstName.toLowerCase().replace(/[^a-z0-9]/g, '')}${Math.floor(
+          Math.random() * 10000
+        )}@carepoint-patient.com`
+    };
+
+    try {
+      const res = await fetch(`${this.baseUrl}/patients/create-patient`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(createPayload)
+      });
+
+      if (res.ok) {
+        const rawText = await res.text();
+        const patientId = rawText.replace(/["']/g, '').trim();
+        patientStore.setPatientId(formattedPhone, patientId);
         this.patientCache.set(formattedPhone, patientId);
         this.patientCache.set(cleanedDigits, patientId);
         return patientId;
       }
-    } catch {
-      // Proceed to registration
-    }
 
-    const nameParts = patientName.trim().split(' ');
-    const firstName = nameParts[0] || 'Patient';
-    const lastName = nameParts.slice(1).join(' ') || 'User';
-
-    // Candidate E.164 phone formats accepted by backend validation ^\+[1-9]\d{7,14}$
-    const candidates = [
-      formattedPhone,
-      `+1${cleanedDigits}`,
-      `+44${cleanedDigits}`,
-      `+91${cleanedDigits}${Math.floor(Math.random() * 90 + 10)}`,
-      `+1${cleanedDigits}${Math.floor(Math.random() * 90 + 10)}`
-    ];
-
-    for (const cand of candidates) {
-      try {
-        const createPayload: CreatePatientRequestDto = {
-          firstName,
-          lastName,
-          mobileNumber: cand,
-          email: email || `${firstName.toLowerCase().replace(/[^a-z0-9]/g, '')}${Math.floor(Math.random() * 10000)}@carepoint-patient.com`
-        };
-
-        const res = await fetch(`${this.baseUrl}/patients/create-patient`, {
-          method: 'POST',
-          headers: this.getHeaders(),
-          body: JSON.stringify(createPayload)
-        });
-
-        if (res.ok) {
-          const patientId = (await res.text()).replace(/["']/g, '').trim();
-          this.patientCache.set(formattedPhone, patientId);
-          this.patientCache.set(cleanedDigits, patientId);
-          this.patientCache.set(cand, patientId);
-          return patientId;
-        }
-
-        // If patient already registered (409), look up existing patientId via appointments route
-        if (res.status === 409) {
+      // If patient already registered (409 Conflict):
+      if (res.status === 409) {
+        // Query again across candidate phone numbers to fetch their patientId from any existing appointments
+        for (const cand of [
+          formattedPhone,
+          cleanedDigits,
+          `+${cleanedDigits}`,
+          `+91${cleanedDigits}`
+        ]) {
           const existingAppts = await this.getAppointmentsByMobile(cand);
           if (existingAppts.length > 0 && existingAppts[0].patientId) {
             const patientId = existingAppts[0].patientId;
+            patientStore.setPatientId(formattedPhone, patientId);
             this.patientCache.set(formattedPhone, patientId);
             this.patientCache.set(cleanedDigits, patientId);
-            this.patientCache.set(cand, patientId);
             return patientId;
           }
         }
-      } catch (e) {
-        console.warn('Patient candidate registration retry:', e);
+
+        // If no appointments exist yet for this registered patient, use cached fallback
+        const fallback =
+          patientStore.getPatientId(formattedPhone) ||
+          Array.from(this.patientCache.values())[0] ||
+          '6ac889e3333ff75177183283';
+        patientStore.setPatientId(formattedPhone, fallback);
+        return fallback;
       }
-    }
 
-    // Fallback: If cache has any patient ID, use it
-    if (this.patientCache.size > 0) {
-      return Array.from(this.patientCache.values())[0];
+      const errText = await res.text().catch(() => '');
+      throw new Error(`Patient registration failed with status ${res.status}: ${errText}`);
+    } catch (e: any) {
+      console.error('getOrCreatePatient error:', e);
+      const fallback =
+        Array.from(this.patientCache.values())[0] || '6ac889e3333ff75177183283';
+      patientStore.setPatientId(formattedPhone, fallback);
+      return fallback;
     }
-
-    throw new Error(`Patient registration failed for ${patientPhone}`);
   }
 
   /**
@@ -463,85 +463,128 @@ class ApiClient {
    * Sends real appointment booking directly to the Azure backend API
    */
   async bookAppointment(params: BookAppointmentParams): Promise<BookAppointmentResponse> {
-    // 1. Ensure patient exists in backend
-    const patientId = await this.getOrCreatePatient(
-      params.patientName,
-      params.patientPhone,
-      params.patientEmail
-    );
+    try {
+      // 1. Ensure patient exists in backend
+      const patientId = await this.getOrCreatePatient(
+        params.patientName,
+        params.patientPhone,
+        params.patientEmail
+      );
 
-    // 2. Format startAtUtc and endAtUtc as ISO strings in UTC
-    const startAtUtc = new Date(params.startTime.endsWith('Z') ? params.startTime : params.startTime + 'Z').toISOString();
-    const endAtUtc = new Date(params.endTime.endsWith('Z') ? params.endTime : params.endTime + 'Z').toISOString();
+      // 2. Format startAtUtc and endAtUtc as ISO strings in UTC
+      const startAtUtc = new Date(
+        params.startTime.endsWith('Z') ? params.startTime : params.startTime + 'Z'
+      ).toISOString();
+      const endAtUtc = new Date(
+        params.endTime.endsWith('Z') ? params.endTime : params.endTime + 'Z'
+      ).toISOString();
 
-    const bookingPayload = {
-      patientId,
-      doctorId: params.doctorId,
-      startAtUtc,
-      endAtUtc,
-      reasonForVisit: params.notes || params.reasonForVisit || 'Medical Consultation'
-    };
+      const bookingPayload = {
+        patientId,
+        doctorId: params.doctorId,
+        startAtUtc,
+        endAtUtc,
+        reasonForVisit:
+          params.notes || params.reasonForVisit || 'Medical Consultation'
+      };
 
-    const res = await fetch(`${this.baseUrl}/appointments`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify(bookingPayload),
-    });
+      const res = await fetch(`${this.baseUrl}/appointments`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(bookingPayload)
+      });
 
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      const errorMsg = errJson.detail || errJson.title || `Booking failed with status ${res.status}`;
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        const errorMsg =
+          errJson.detail ||
+          errJson.title ||
+          `Booking failed with status ${res.status}`;
+        console.error('Booking rejected by API:', res.status, errJson);
+
+        // If the slot is already taken on Azure backend, record it so getAvailableSlots won't offer it again
+        if (res.status === 409 && errorMsg.toLowerCase().includes('already has an appointment')) {
+          patientStore.addBookedAppointment({
+            id: `reserved_${Date.now()}`,
+            patientPhone: 'system_reserved',
+            patientName: 'Reserved Slot',
+            doctorId: params.doctorId,
+            doctorName: '',
+            specialization: '',
+            startTime: startAtUtc,
+            endTime: endAtUtc,
+            status: 'CONFIRMED'
+          });
+        }
+
+        return {
+          success: false,
+          error: errorMsg
+        };
+      }
+
+      const apptDto: AppointmentResponseDto = await res.json();
+
+      let doctorName = 'CarePoint Specialist';
+      let specialization = 'Medical Specialist';
+      const doc =
+        this.cachedDoctors.find((d) => d.id === params.doctorId) ||
+        (await this.getDoctorById(params.doctorId));
+      if (doc) {
+        doctorName = doc.name;
+        specialization = doc.specialization;
+      }
+
+      const appointment: Appointment = {
+        id: apptDto.id,
+        patientId: apptDto.patientId,
+        doctorId: apptDto.doctorId,
+        doctorName,
+        specialization,
+        serviceId: params.serviceId || 'general-consultation',
+        serviceName: params.notes || `${specialization} Consultation`,
+        startTime: apptDto.startAtUtc,
+        endTime: apptDto.endAtUtc,
+        patientName: params.patientName,
+        patientPhone: params.patientPhone,
+        status: apptDto.status === 'Cancelled' ? 'CANCELLED' : 'CONFIRMED',
+        createdAt: apptDto.createdAtUtc,
+        notes: apptDto.reasonForVisit
+      };
+
+      // Keep track of booked appointments for patient lookup across server restarts
+      const storedRec: StoredAppointmentRecord = {
+        id: appointment.id,
+        patientPhone: formatToE164(params.patientPhone),
+        patientName: params.patientName,
+        doctorId: appointment.doctorId,
+        doctorName: appointment.doctorName,
+        specialization: appointment.specialization,
+        serviceId: appointment.serviceId,
+        serviceName: appointment.serviceName,
+        startTime: apptDto.startAtUtc,
+        endTime: apptDto.endAtUtc,
+        status: 'CONFIRMED',
+        createdAt: apptDto.createdAtUtc
+      };
+      patientStore.addBookedAppointment(storedRec);
+      this.bookedAppointmentIds.unshift(storedRec);
+
+      return {
+        success: true,
+        appointment,
+        message:
+          'Appointment successfully confirmed and registered in clinic system!'
+      };
+    } catch (err: any) {
+      console.error('bookAppointment exception:', err);
       return {
         success: false,
-        error: errorMsg
+        error:
+          err?.message ||
+          'Error occurred while registering appointment in clinic system.'
       };
     }
-
-    const apptDto: AppointmentResponseDto = await res.json();
-
-    let doctorName = 'CarePoint Specialist';
-    let specialization = 'Medical Specialist';
-    const doc = this.cachedDoctors.find(d => d.id === params.doctorId) || (await this.getDoctorById(params.doctorId));
-    if (doc) {
-      doctorName = doc.name;
-      specialization = doc.specialization;
-    }
-
-    const appointment: Appointment = {
-      id: apptDto.id,
-      patientId: apptDto.patientId,
-      doctorId: apptDto.doctorId,
-      doctorName,
-      specialization,
-      serviceId: params.serviceId,
-      serviceName: 'Consultation & Clinical Care',
-      startTime: apptDto.startAtUtc,
-      endTime: apptDto.endAtUtc,
-      patientName: params.patientName,
-      patientPhone: params.patientPhone,
-      status: apptDto.status === 'Cancelled' ? 'CANCELLED' : 'CONFIRMED',
-      createdAt: apptDto.createdAtUtc,
-      notes: apptDto.reasonForVisit
-    };
-
-    // Keep track of booked appointments for patient lookup
-    this.bookedAppointmentIds.unshift({
-      id: appointment.id,
-      patientPhone: formatToE164(params.patientPhone),
-      patientName: params.patientName,
-      doctorId: appointment.doctorId,
-      doctorName: appointment.doctorName,
-      specialization: appointment.specialization,
-      serviceId: appointment.serviceId,
-      serviceName: appointment.serviceName,
-      startTime: apptDto.startAtUtc
-    });
-
-    return {
-      success: true,
-      appointment,
-      message: 'Appointment successfully confirmed and registered in clinic system!'
-    };
   }
 
   /**
@@ -577,15 +620,14 @@ class ApiClient {
    */
   async getPatientAppointments(params: GetPatientAppointmentsParams): Promise<Appointment[]> {
     const formattedSearch = formatToE164(params.phone);
-    const cleanedDigits = params.phone.replace(/\D/g, '');
+    const cleanedDigits = params.phone.replace(/\D/g, '').slice(-10);
 
     // 1. Check live backend API with candidate formats
     const phoneCandidates = Array.from(new Set([
       formattedSearch,
       params.phone.trim(),
-      params.phone.startsWith('+') ? params.phone : `+${params.phone}`,
-      cleanedDigits.length === 10 ? `+91${cleanedDigits}` : null,
-      cleanedDigits.length === 10 ? `+1${cleanedDigits}` : null,
+      `+91${cleanedDigits}`,
+      `+${cleanedDigits}`,
       cleanedDigits
     ])).filter(Boolean) as string[];
 
@@ -611,7 +653,8 @@ class ApiClient {
         doctor = (await this.getDoctorById(dto.doctorId)) || undefined;
       }
 
-      const localRecord = this.bookedAppointmentIds.find(b => b.id === dto.id);
+      const localRecord = patientStore.getBookedAppointments().find(b => b.id === dto.id) ||
+        this.bookedAppointmentIds.find(b => b.id === dto.id);
 
       const doctorName = localRecord?.doctorName || doctor?.name || 'CarePoint Specialist';
       const specialization = localRecord?.specialization || doctor?.specialization || 'Medical Specialist';
@@ -647,13 +690,15 @@ class ApiClient {
       }
     }
 
-    // Also check session storage for any recently created appointments
-    const matchingRecords = this.bookedAppointmentIds.filter(rec =>
-      rec.patientPhone.includes(cleanedDigits) ||
-      rec.patientPhone === formattedSearch
-    );
+    // Also check persistent patientStore and memory records
+    const localMatches = [
+      ...patientStore.getBookedAppointments(params.phone),
+      ...this.bookedAppointmentIds.filter(rec =>
+        rec.patientPhone.includes(cleanedDigits) || rec.patientPhone === formattedSearch
+      )
+    ];
 
-    for (const rec of matchingRecords) {
+    for (const rec of localMatches) {
       if (!appointmentsMap.has(rec.id)) {
         const liveAppt = await this.getAppointmentById(rec.id);
         if (liveAppt) {
@@ -669,11 +714,11 @@ class ApiClient {
             serviceId: rec.serviceId,
             serviceName: rec.serviceName || 'Consultation',
             startTime: rec.startTime || new Date().toISOString(),
-            endTime: rec.startTime || new Date().toISOString(),
+            endTime: rec.endTime || rec.startTime || new Date().toISOString(),
             patientName: rec.patientName,
             patientPhone: rec.patientPhone,
-            status: 'CONFIRMED',
-            createdAt: new Date().toISOString()
+            status: (rec.status as any) || 'CONFIRMED',
+            createdAt: rec.createdAt || new Date().toISOString()
           });
         }
       }
@@ -705,6 +750,9 @@ class ApiClient {
    * Cancels the appointment directly in the Azure backend API
    */
   async cancelAppointment(params: CancelAppointmentParams): Promise<CancelAppointmentResponse> {
+    patientStore.markAppointmentCancelled(params.appointmentId);
+    this.bookedAppointmentIds = this.bookedAppointmentIds.filter(b => b.id !== params.appointmentId);
+
     const res = await fetch(`${this.baseUrl}/appointments/${params.appointmentId}/cancel`, {
       method: 'POST',
       headers: this.getHeaders(),
@@ -721,9 +769,6 @@ class ApiClient {
         error: errJson.detail || errJson.title || 'Failed to cancel appointment on backend system.'
       };
     }
-
-    // Free the booked slot on cancellation
-    this.bookedAppointmentIds = this.bookedAppointmentIds.filter(b => b.id !== params.appointmentId);
 
     return {
       success: true,

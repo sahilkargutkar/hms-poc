@@ -2,7 +2,7 @@ import { SYSTEM_PROMPT } from './prompts';
 import { AI_TOOLS } from './tools';
 import { executeAiTool } from './toolHandlers';
 import { apiClient } from '@/lib/api/client';
-import { getTomorrowDateString } from '@/lib/utils/date';
+import { getTomorrowDateString, formatDateDisplay, formatTimeDisplay } from '@/lib/utils/date';
 import { EMERGENCY_CONFIG, isEmergencyQuery, matchEmergencyCategories } from '@/lib/constants/emergency';
 import { matchClinicInfoOrFaq, CLINIC_INFO_FALLBACK_MESSAGE } from '@/lib/constants/clinicInfo';
 import {
@@ -148,6 +148,23 @@ async function handleDirectUiAction(
         state.service = services[0];
       }
 
+      if (slots.length === 0) {
+        return {
+          updatedState: state,
+          message: {
+            id: `msg_${Date.now()}`,
+            role: 'assistant',
+            type: 'text',
+            timestamp: nowIso,
+            content: `**${doctor.name}** (${doctor.specialization}) does not have available consultation slots on **${formatDateDisplay(state.date)}** (the doctor may be off-duty or fully booked for this day).\n\nWould you like to select another specialist or check your existing appointments?`,
+            quickReplies: [
+              { id: 'qr_other_doc', label: 'View Other Doctors', actionText: 'Show me other doctors' },
+              { id: 'qr_view_apts', label: 'View My Appointments', actionText: 'Show me my appointments' }
+            ]
+          }
+        };
+      }
+
       const quickReplies: QuickReply[] = [
         { id: 'qr_tomorrow', label: 'Tomorrow', actionText: 'Check availability for tomorrow' },
         { id: 'qr_afternoon', label: 'Around 4:00 PM', actionText: 'Do you have slots around 4 PM?' },
@@ -249,7 +266,7 @@ async function handleDirectUiAction(
     }
 
     case 'CONFIRM_BOOKING': {
-      if (!state.doctor || !state.selectedSlot || !state.patient.name || !state.patient.phone) {
+      if (!state.doctor || !state.selectedSlot || !state.patient.phone) {
         return {
           updatedState: state,
           message: {
@@ -257,9 +274,13 @@ async function handleDirectUiAction(
             role: 'assistant',
             type: 'error',
             timestamp: nowIso,
-            content: `We're missing some appointment details. Please provide your name and phone number to complete the booking.`
+            content: `We're missing some appointment details. Please provide your phone number to complete the booking.`
           }
         };
+      }
+
+      if (!state.patient.name) {
+        state.patient.name = 'Patient';
       }
 
       const bookRes = await executeAiTool('book_appointment', {
@@ -308,6 +329,12 @@ async function handleDirectUiAction(
           }
         };
       } else {
+        const errorDetail =
+          bookRes.result?.error ||
+          bookRes.error ||
+          'The slot may have just been booked by another patient';
+        console.error('CONFIRM_BOOKING failed:', errorDetail);
+
         return {
           updatedState: state,
           message: {
@@ -315,7 +342,11 @@ async function handleDirectUiAction(
             role: 'assistant',
             type: 'error',
             timestamp: nowIso,
-            content: `Sorry, I couldn't complete the booking: ${bookRes.result?.error || 'Slot may have just been taken'}. Let me check for another available time for you.`
+            content: `Sorry, I couldn't complete the booking: ${errorDetail}. Let me check for another available time for you.`,
+            quickReplies: [
+              { id: 'qr_change_slot', label: 'Choose Another Time Slot', actionText: 'Show me available slots' },
+              { id: 'qr_view_doc', label: 'Choose Another Doctor', actionText: 'Show doctors' }
+            ]
           }
         };
       }
@@ -401,6 +432,43 @@ async function handleDirectUiAction(
 }
 
 /**
+ * Robust extractor for patient name & phone from natural user text
+ */
+function extractPatientInfo(text: string): { phone: string | null; name: string | null } {
+  const phoneRegex = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\b\d{10}\b/;
+  const phoneMatch = text.match(phoneRegex);
+  let phone: string | null = null;
+  let textWithoutPhone = text;
+
+  if (phoneMatch) {
+    phone = phoneMatch[0].replace(/\D/g, '');
+    textWithoutPhone = text.replace(phoneMatch[0], ' ');
+  }
+
+  let name: string | null = null;
+  const namePrefixMatch = textWithoutPhone.match(/(?:my name is|name is|i am|i'm|this is)\s+([A-Za-z\s]+)/i);
+  if (namePrefixMatch && namePrefixMatch[1]) {
+    name = namePrefixMatch[1].trim();
+  } else if (text.includes(',')) {
+    const parts = text.split(',');
+    const part0 = parts[0].trim().replace(/[^\w\s]/g, '');
+    if (part0 && !/^\d+$/.test(part0)) {
+      name = part0;
+    }
+  } else if (textWithoutPhone.trim()) {
+    const cleanRemainder = textWithoutPhone
+      .replace(/[^\w\s]/g, ' ')
+      .replace(/\b(hi|hello|hey|book|appointment|for|please|dr|doctor|my|is|phone|number|mobile|patient)\b/gi, ' ')
+      .trim();
+    if (cleanRemainder.length >= 2 && !/^\d+$/.test(cleanRemainder)) {
+      name = cleanRemainder.replace(/\s+/g, ' ');
+    }
+  }
+
+  return { phone, name };
+}
+
+/**
  * Natural language conversational planner engine (Rock-solid fallback)
  */
 async function executeConversationalEngine(
@@ -412,22 +480,15 @@ async function executeConversationalEngine(
   const lower = text.toLowerCase();
   const nowIso = new Date().toISOString();
 
-  // Extract phone numbers (e.g. 9876543210, +1 555-123-4567, 10 digits)
-  const phoneMatch = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\b\d{10}\b/);
-  if (phoneMatch) {
-    state.patient.phone = phoneMatch[0].replace(/\D/g, '');
+  // Extract phone & name intelligently from input
+  const extracted = extractPatientInfo(text);
+  if (extracted.phone) {
+    state.patient.phone = extracted.phone;
   }
-
-  // Extract patient name (e.g. "John", "John Doe", "My name is John Doe")
-  if (state.pendingAction === 'awaiting_patient_info' || (!state.patient.name && lower.includes('name is'))) {
-    const nameMatch = text.match(/(?:my name is|name is|i am|i'm)\s+([A-Za-z\s]+)/i) ||
-      (text.includes(',') ? [null, text.split(',')[0].trim()] : null);
-    if (nameMatch && nameMatch[1]) {
-      state.patient.name = nameMatch[1].trim();
-    } else if (!text.includes(' ') && text.length > 1 && !phoneMatch) {
-      state.patient.name = text;
-    }
+  if (extracted.name && (!state.patient.name || state.pendingAction === 'awaiting_patient_info')) {
+    state.patient.name = extracted.name;
   }
+  const phoneMatch = extracted.phone ? [extracted.phone] : null;
 
   // 1. EMERGENCY PROTOCOL CHECK
   const localMatch = matchEmergencyCategories(text);
@@ -644,46 +705,68 @@ async function executeConversationalEngine(
   }
 
   // 4. CONFIRMATION COMMAND
+  const isConfirmIntent =
+    lower.includes('confirm') ||
+    lower === 'yes' ||
+    lower === 'yes please' ||
+    lower === 'proceed' ||
+    lower === 'book it' ||
+    lower === 'yes, book it';
+
   if (
-    state.pendingAction === 'awaiting_confirmation' &&
-    (lower.includes('confirm') || lower.includes('yes') || lower.includes('book it') || lower.includes('proceed'))
+    isConfirmIntent &&
+    state.doctor &&
+    state.selectedSlot &&
+    (state.pendingAction === 'awaiting_confirmation' || state.isOtpVerified || state.patient.phone)
   ) {
     return handleDirectUiAction({ type: 'CONFIRM_BOOKING' }, state);
   }
 
   // 5. IF AWAITING PATIENT INFO AND USER PROVIDED IT
   if (state.pendingAction === 'awaiting_patient_info' || (state.selectedSlot && (!state.patient.name || !state.patient.phone))) {
-    if (text.includes(',') || (phoneMatch && text.length > 10)) {
-      const parts = text.split(',');
-      if (parts.length >= 2) {
-        state.patient.name = parts[0].trim();
-        state.patient.phone = parts[1].replace(/\D/g, '').trim();
-      } else if (phoneMatch) {
-        state.patient.phone = phoneMatch[0].replace(/\D/g, '');
-        const namePart = text.replace(phoneMatch[0], '').replace(/[^\w\s]/g, '').trim();
-        if (namePart) state.patient.name = namePart;
-      }
+    if (extracted.phone) {
+      state.patient.phone = extracted.phone;
+    }
+    if (extracted.name) {
+      state.patient.name = extracted.name;
+    }
 
-      if (state.patient.name && state.patient.phone) {
-        state.pendingAction = 'awaiting_confirmation';
+    if (state.patient.phone) {
+      if (!state.isOtpVerified) {
+        state.pendingAction = 'awaiting_otp';
         return {
           updatedState: state,
           message: {
             id: `msg_${Date.now()}`,
             role: 'assistant',
-            type: 'booking-confirmation',
+            type: 'text',
             timestamp: nowIso,
-            content: `Thank you, **${state.patient.name}**! Please verify the appointment details below:`,
-            bookingDraft: {
-              doctor: state.doctor,
-              service: state.service,
-              date: state.date,
-              selectedSlot: state.selectedSlot,
-              patient: state.patient
-            }
+            content: `Thank you, **${state.patient.name || 'Patient'}**! We've sent a 4-digit verification code to **${state.patient.phone}**.\n\nPlease enter the **4-digit OTP** to verify your contact number and proceed with booking.`,
+            quickReplies: [
+              { id: 'qr_demo_otp', label: 'Use Demo OTP (1234)', actionText: '1234' }
+            ]
           }
         };
       }
+
+      state.pendingAction = 'awaiting_confirmation';
+      return {
+        updatedState: state,
+        message: {
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          type: 'booking-confirmation',
+          timestamp: nowIso,
+          content: `Thank you, **${state.patient.name || 'Patient'}**! Please verify the appointment details below:`,
+          bookingDraft: {
+            doctor: state.doctor,
+            service: state.service,
+            date: state.date,
+            selectedSlot: state.selectedSlot,
+            patient: state.patient
+          }
+        }
+      };
     }
   }
 
@@ -719,7 +802,7 @@ async function executeConversationalEngine(
   else if (lower.includes('eye') || lower.includes('vision') || lower.includes('ophtha')) specialtyQuery = 'ophthalmologist';
   else if (lower.includes('child') || lower.includes('pediatric') || lower.includes('baby')) specialtyQuery = 'pediatrician';
   else if (lower.includes('heart') || lower.includes('cardio')) specialtyQuery = 'cardiologist';
-  else if (lower.includes('doctor') || lower.includes('physician') || lower.includes('fever') || lower.includes('general') || lower.includes('appointment')) {
+  else if (lower.includes('doctor') || lower.includes('physician') || lower.includes('fever') || lower.includes('general') || (lower.includes('appointment') && !lower.includes('confirm'))) {
     specialtyQuery = 'general physician';
   }
 
@@ -737,6 +820,24 @@ async function executeConversationalEngine(
       const servicesRes = await executeAiTool('get_services', { doctorId: doctor.id });
       if (servicesRes.result?.length > 0) state.service = servicesRes.result[0];
 
+      const slots: AvailableSlot[] = slotsRes.result || [];
+      if (slots.length === 0) {
+        return {
+          updatedState: state,
+          message: {
+            id: `msg_${Date.now()}`,
+            role: 'assistant',
+            type: 'text',
+            timestamp: nowIso,
+            content: `We have **${doctor.name}** (${doctor.specialization}) available, but there are no consultation slots on **${formatDateDisplay(state.date)}** (the doctor may be off-duty or fully booked for this day).\n\nWould you like to check another doctor or your existing appointments?`,
+            quickReplies: [
+              { id: 'qr_other_doc', label: 'View Other Doctors', actionText: 'Show me other doctors' },
+              { id: 'qr_view_apts', label: 'View My Appointments', actionText: 'Show me my appointments' }
+            ]
+          }
+        };
+      }
+
       return {
         updatedState: state,
         message: {
@@ -745,7 +846,7 @@ async function executeConversationalEngine(
           type: 'available-slots',
           timestamp: nowIso,
           content: `We have **${doctor.name}** (${doctor.specialization}) available. What time would you prefer for **${formatDateDisplay(state.date)}**?`,
-          slots: slotsRes.result || [],
+          slots,
           selectedDate: state.date
         }
       };
@@ -878,6 +979,70 @@ async function executeLlmAgentFlow(
         }
       };
     }
+
+    if (toolName === 'book_appointment' && execResult.result) {
+      if (execResult.result.success && execResult.result.appointment) {
+        const appointment: Appointment = execResult.result.appointment;
+        const timeStr = formatTimeDisplay(appointment.startTime);
+        const dateStr = formatDateDisplay(appointment.startTime.split('T')[0]);
+
+        state = {
+          doctor: null,
+          service: null,
+          date: null,
+          selectedSlot: null,
+          patient: { ...state.patient },
+          currentAppointment: null,
+          pendingAction: 'idle',
+          isOtpVerified: true
+        };
+
+        const quickReplies: QuickReply[] = [
+          { id: 'qr_review', label: '⭐ Rate on Google Reviews', actionText: 'Leave a Google review' },
+          { id: 'qr_view_apt', label: 'View My Appointments', actionText: 'Show me my appointments' },
+          { id: 'qr_book_another', label: 'Book Another Appointment', actionText: 'I want to book another appointment' }
+        ];
+
+        return {
+          updatedState: state,
+          message: {
+            id: `msg_${Date.now()}`,
+            role: 'assistant',
+            type: 'appointment',
+            timestamp: new Date().toISOString(),
+            content: `🎉 **Your appointment is confirmed!**\n\nYou're booked with **${appointment.doctorName}** for **${dateStr} at ${timeStr}**.\n\nAn SMS confirmation with clinic directions has been dispatched to **${appointment.patientPhone}**.\n\n⭐⭐⭐⭐⭐\n**Happy with your booking experience?**\nWe'd love your feedback! Please [leave us a review on Google](https://g.page/r/carepoint-clinic/review) to share your thoughts with our healthcare team.`,
+            appointment,
+            quickReplies
+          }
+        };
+      } else {
+        return {
+          updatedState: state,
+          message: {
+            id: `msg_${Date.now()}`,
+            role: 'assistant',
+            type: 'error',
+            timestamp: new Date().toISOString(),
+            content: `Sorry, I couldn't complete the booking: ${execResult.result?.error || execResult.error || 'The slot may no longer be available.'}`
+          }
+        };
+      }
+    }
+
+    if (toolName === 'cancel_appointment' && execResult.result) {
+      return {
+        updatedState: state,
+        message: {
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          type: execResult.result.success ? 'cancellation-success' : 'error',
+          timestamp: new Date().toISOString(),
+          content: execResult.result.success
+            ? `Your appointment has been **cancelled successfully**.\n\nA cancellation confirmation SMS has been sent to your phone.`
+            : `Sorry, I couldn't cancel the appointment: ${execResult.result.error || 'Please contact the clinic reception directly.'}`
+        }
+      };
+    }
   }
 
   const isEmerg = isEmergencyQuery(userPrompt) || isEmergencyQuery(responseMsg?.content || '');
@@ -899,24 +1064,4 @@ async function executeLlmAgentFlow(
       } : undefined
     }
   };
-}
-
-function formatDateDisplay(dateStr: string | null | undefined): string {
-  if (!dateStr) return 'Tomorrow';
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  } catch {
-    return dateStr;
-  }
-}
-
-function formatTimeDisplay(isoStr: string | null | undefined): string {
-  if (!isoStr) return '';
-  try {
-    const d = new Date(isoStr);
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  } catch {
-    return isoStr.substring(11, 16);
-  }
 }

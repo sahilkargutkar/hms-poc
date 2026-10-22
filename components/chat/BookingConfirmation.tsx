@@ -28,13 +28,27 @@ export const BookingConfirmation: React.FC<BookingConfirmationProps> = ({
       })
     : 'Selected Date';
 
-  const formattedTime = selectedSlot?.startTime
-    ? new Date(selectedSlot.startTime).toLocaleTimeString('en-US', {
+  const formatSlotTime = (isoStr?: string) => {
+    if (!isoStr) return 'Selected Time';
+    try {
+      const timePart = isoStr.includes('T') ? isoStr.split('T')[1].substring(0, 5) : '';
+      if (timePart && timePart.includes(':')) {
+        const [h, m] = timePart.split(':').map(Number);
+        const period = h >= 12 ? 'PM' : 'AM';
+        const displayH = h % 12 === 0 ? 12 : h % 12;
+        return `${displayH}:${m.toString().padStart(2, '0')} ${period}`;
+      }
+      return new Date(isoStr).toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
         hour12: true
-      })
-    : 'Selected Time';
+      });
+    } catch {
+      return isoStr;
+    }
+  };
+
+  const formattedTime = formatSlotTime(selectedSlot?.startTime);
 
   return (
     <div className="rounded-xl border border-teal-200 bg-teal-50/30 p-4 sm:p-5 shadow-sm ring-1 ring-teal-500/10">
@@ -129,7 +143,7 @@ export const BookingConfirmation: React.FC<BookingConfirmationProps> = ({
         <button
           type="button"
           onClick={onConfirm}
-          disabled={isLoading || !patient.name || !patient.phone}
+          disabled={isLoading || !patient.phone}
           className="flex items-center justify-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-xs sm:text-sm font-semibold text-white shadow-sm hover:bg-teal-700 active:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
           <CheckCircle className="h-4 w-4" />

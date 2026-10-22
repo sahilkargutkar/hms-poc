@@ -19,7 +19,8 @@ import {
   Award,
   ChevronRight,
   MessageSquareHeart,
-  Headphones
+  Headphones,
+  CalendarCheck
 } from 'lucide-react';
 import {
   FaTooth,
@@ -173,6 +174,14 @@ export const ClinicWebsite: React.FC<ClinicWebsiteProps> = ({
 
           {/* Action CTA to open Front Desk */}
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => onOpenBot('Show me my appointments')}
+              className="hidden sm:flex items-center gap-1.5 rounded-xl border border-teal-200 bg-white px-3.5 py-2.5 text-xs sm:text-sm font-semibold text-teal-800 hover:bg-teal-50/80 active:scale-95 transition-all shadow-2xs"
+            >
+              <CalendarCheck className="h-4 w-4 text-teal-600" />
+              <span>My Appointments</span>
+            </button>
             <button
               type="button"
               onClick={() => onOpenBot()}
